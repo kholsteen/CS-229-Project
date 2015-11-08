@@ -6,6 +6,7 @@
 # ================================================================================= #
 
 library(RSQLite)
+library(plyr)
 # ================================================================================= #
 
 
@@ -66,10 +67,39 @@ create_flattenedDataset <- function(con, typeString, Ndiagnosis, Nmedication, Nl
 # ================================================================================= #
 addTranscriptVariables <- function(con, typeString, flatDataset) {
   
-  train_transcriptTable <- dbGetQuery(con, "SELECT * FROM training_transcript")
+  transcript <- dbGetQuery(con, "SELECT * FROM training_transcript")
+  # get mean, max of numeric variables
+  num.vars <- c("BMI", "SystolicBP",  "DiastolicBP")
+  for (varname in num.vars) {
+    transcript[which(transcript[, varname] %in% c("NULL")), varname] <- NA 
+    transcript[, varname] <- as.numeric(transcript[, varname])
+  if (varname %in% c("SystolicBP",  "DiastolicBP")) {
+      transcript[which(transcript[, varname] < 50), varname] <- NA 
+      transcript[which(transcript[, varname] > 250), varname] <- NA 
+    } else if (varname %in% "BMI") {
+      transcript[which(transcript[, varname] < 17), varname] <- NA
+      transcript[which(transcript[, varname] > 50), varname] <- NA     
+    }    
+  }
+
+  ## loop over numeric variables: 
+  maxCols <- lapply(num.vars, function(varname) {
+    return(by(transcript[, varname], transcript$PatientGuid, max))
+  })
+  maxCols <- do.call('cbind', maxCols)
+  colnames(maxCols) <- paste0(num.vars,".max")
+  meanCols <- lapply(num.vars, function(varname) {
+    return(by(transcript[, varname], transcript$PatientGuid, mean, na.rm=TRUE))
+  })  
+  meanCols <- do.call('cbind', meanCols) 
+  meanCols[which(is.nan(meanCols))] <- NA
+  colnames(meanCols) <- paste0(num.vars,".mean")
+  phys.Endo.Count <- ddply(transcript,.(PatientGuid),
+        summarize, count = sum(PhysicianSpecialty %in% c("Endocrinology; Diabetes; & Metabolism")))
+  AllCols = as.data.frame(cbind(maxCols, meanCols, phys.Endo.Count = phys.Endo.Count$count))
+  AllCols$PatientGuid = unique(transcript$PatientGuid)
+  flatDataset <- merge(flatDataset, AllCols, by="PatientGuid", all=TRUE)
  
-  
-  
 }
 
 
@@ -91,27 +121,63 @@ addDiagnosisVariables <- function(con, typeString, flatDataset, Ndiagnosis) {
   
   # Create frequency table of ICD9 codes as determined by training set.
   # Train and test sets need to reference the same features.
-  train_dxTable <- dbGetQuery(con, "SELECT * FROM training_diagnosis")
-  freqTable <- data.frame(prop.table(table(train_dxTable$ICD9Code)))
-  colnames(freqTable) <- c("ICD9", "Freq")
-  freqTable$ICD9 <- levels(droplevels(freqTable$ICD9))  # formating step: remove factors to get ICD9 as strings
-  freqTable <- freqTable[order(freqTable$Freq, decreasing=TRUE),]
+  train_dxTable <- dbGetQuery(con, "SELECT * FROM training_transcriptdiagnosis td 
+                              LEFT JOIN training_diagnosis d 
+                              ON d.DiagnosisGuid = td.DiagnosisGuid")
+  
+  ## create table of most common 5-digit (full) ICD-9 codes
+  freqTable5digit <- data.frame(prop.table(table(train_dxTable$ICD9Code)))
+  colnames(freqTable5digit) <- c("ICD9", "Freq")
+  freqTable5digit$ICD9 <- levels(droplevels(freqTable5digit$ICD9))  # formating step: remove factors to get ICD9 as strings
+  freqTable5digit <- freqTable5digit[order(freqTable5digit$Freq, decreasing=TRUE),]
+  
+  ## create table of most common 1st 3-digits of ICD-9 codes (more general category)
+  ## get substrings
+  train_dxTable$ICD9_3digit <- substr(train_dxTable$ICD9Code,1,3)
+  ## create frequency table
+  freqTable3digit <- data.frame(prop.table(table(train_dxTable$ICD9_3digit)))
+  colnames(freqTable3digit) <- c("ICD9", "Freq")
+  freqTable3digit$ICD9 <- levels(droplevels(freqTable3digit$ICD9)) 
+  freqTable3digit <- freqTable3digit[order(freqTable3digit$Freq, decreasing=TRUE),] 
   
   if ( typeString == "test" ) {
-    tableToRead <- dbGetQuery(con, "SELECT * FROM test_diagnosis")
+    tableToRead <- dbGetQuery(con, 
+                              "SELECT * FROM test_transcriptdiagnosis td 
+                              LEFT JOIN test_diagnosis d 
+                              ON d.DiagnosisGuid = td.DiagnosisGuid")
+    ## get substrings for test set
+    tableToRead$ICD9_3digit <- substr(tableToRead$ICD9Code,1,3)
   }
   else {
     tableToRead <- train_dxTable
   }
+
+  ## count the number of instances of the given code
+  ## considering only the Ndiagnosis most common codes
+  dgn5digitList <- lapply(1:Ndiagnosis, function(d) {
+    counts <- ddply(tableToRead,c("PatientGuid"),  
+                    .fun = function(xx, dgn) {
+                      c(count = sum(xx[,"ICD9Code"]==dgn))
+                    }, dgn= freqTable5digit[d,1])
+    return(counts$count)
+  })    
+  dgn5digitCols <- do.call('cbind', dgn5digitList)
+  colnames(dgn5digitCols) <- paste0("ct.", freqTable5digit$ICD9[1:Ndiagnosis], "_5digit")
+      
+  dgn3digitList <- lapply(1:Ndiagnosis, function(d) {
+    counts <- ddply(tableToRead,c("PatientGuid"),  
+                      .fun = function(xx, dgn) {
+        c(count = sum(xx[,"ICD9_3digit"]==dgn))
+        }, dgn= freqTable3digit[d,1])  
+    return(counts$count)
+      })  
+  dgn3digitCols <- do.call('cbind', dgn3digitList) 
+  colnames(dgn3digitCols) <- paste0("ct.", freqTable3digit$ICD9[1:Ndiagnosis], "_3digit") 
+    
+  dgnAllCols <- as.data.frame(cbind(dgn5digitCols, dgn3digitCols))
+  dgnAllCols$PatientGuid <- unique(tableToRead$PatientGuid)
   
-  for ( i in 1:Ndiagnosis ) {
-    hasFeature <- unique(subset(tableToRead, ICD9Code==freqTable[i,1])$PatientGuid)
-    indCol <- rep(0, length(flatDataset[,1]))
-    indCol[flatDataset$PatientGuid %in% hasFeature] <- 1
-    flatDataset <- cbind(flatDataset, indCol)
-    colnames(flatDataset)[length(flatDataset)] <- freqTable[i,1]
-  }
-  
+  flatDataset <- merge(flatDataset, dgnAllCols, by="PatientGuid", all=TRUE)
   return(flatDataset) 
 }
 
@@ -144,6 +210,8 @@ addMedicationVariables <- function(con, typeString, flatDataset, Nmedication) {
   else {
     tableToRead <- train_medTable
   }  
+  
+  ## Identify hypertension and other classes of medications
   
   for ( i in 1:Nmedication ) {
     hasFeature <- unique(subset(tableToRead, MedicationName==freqTable[i,1])$PatientGuid)
