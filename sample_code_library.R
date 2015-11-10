@@ -5,13 +5,10 @@
 # 7-July-2012
 # ================================================================================= #
 
-library(RSQLite)
-library(plyr)
-# ================================================================================= #
 
 
 # ================================================================================= #
-create_flattenedDataset <- function(con, typeString, Ndiagnosis, Nmedication, Nlab, AddTranscript) {
+create_flattenedDataset <- function(con, typeString, Ndiagnosis, Nmedication, Nlab, AddTranscript, nDrTypes) {
 # create_flattenedDataset()
 # A given patient will have mulitple diagnoses, medication, labs, prescriptions, etc.
 # This function does a simple flattening procedure whereby the top N most 
@@ -35,21 +32,13 @@ create_flattenedDataset <- function(con, typeString, Ndiagnosis, Nmedication, Nl
   if ( typeString == "test" ) {
     patientTable <- dbGetQuery(con, "SELECT * FROM test_patient")
     patientDemo <-   subset(patientTable, select=c("PatientGuid", "Gender", "YearOfBirth"))
-    # Convert gender = "F" or "M" to 0, 1
-    patientDemo[patientDemo$Gender == "F",2] <- 0
-    patientDemo[patientDemo$Gender == "M",2] <- 1    
     flatDataset <- patientDemo 
   }
   else {
     patientTable <- dbGetQuery(con, "SELECT * FROM training_patient")
-    patientDemo <-   subset(patientTable, select=c("PatientGuid", "dmIndicator", "Gender", "YearOfBirth"))
-    # Convert gender = "F" or "M" to 0, 1
-    patientDemo[patientDemo$Gender == "F",3] <- 0
-    patientDemo[patientDemo$Gender == "M",3] <- 1
-    
+    patientDemo <-   subset(patientTable, select=c("PatientGuid", "dmIndicator", "Gender", "YearOfBirth", "State"))
     flatDataset <- patientDemo
   }
-  
   if ( typeString == "test" ) {
     if ( Ndiagnosis > 0 ) { flatDataset <- addDiagnosisVariables(con, "test", flatDataset, Ndiagnosis) }
     if ( Nmedication > 0 ) {flatDataset <- addMedicationVariables(con, "test", flatDataset, Nmedication) }
@@ -59,45 +48,76 @@ create_flattenedDataset <- function(con, typeString, Ndiagnosis, Nmedication, Nl
     if ( Ndiagnosis > 0 ) { flatDataset <- addDiagnosisVariables(con, "training", flatDataset, Ndiagnosis) }
     if ( Nmedication > 0 ) { flatDataset <- addMedicationVariables(con, "training", flatDataset, Nmedication) }
     if ( Nlab >0 ) { flatDataset <- addLabsVariables(con, "training", flatDataset, Nlab) }
-    if (AddTranscript > 0) {flatDataset <- addTranscriptVariables(con, "training", flatDataset)}
-  }
+    if (AddTranscript > 0) {flatDataset <- addTranscriptVariables(con, "training", flatDataset, nDrTypes)}
+  }  
   
+  ## eliminate patient with missing diabetes indicator or year of birth
+  flatDataset <- flatDataset[!is.na(flatDataset$dmIndicator) & !is.na(flatDataset$YearOfBirth),]    
+  flatDataset$Gender <- as.factor(flatDataset$Gender)
+  flatDataset$dmIndicator <- as.factor(flatDataset$dmIndicator)
+  flatDataset$State <- as.factor(flatDataset$State)  
+  flatDataset$PatientGuid <- as.factor(flatDataset$PatientGuid)  
   return(flatDataset) 
 }
 # ================================================================================= #
-addTranscriptVariables <- function(con, typeString, flatDataset) {
+addTranscriptVariables <- function(con, typeString, flatDataset, nDrTypes) {
   
   transcript <- dbGetQuery(con, "SELECT * FROM training_transcript")
-  # get mean, max of numeric variables
-  num.vars <- c("BMI", "SystolicBP",  "DiastolicBP")
+  # get median of numeric variables
+  num.vars <- c("Height", "Weight", "BMI", "SystolicBP",  "DiastolicBP")
   for (varname in num.vars) {
-    transcript[which(transcript[, varname] %in% c("NULL")), varname] <- NA 
+    transcript[which(transcript[, varname] %in% c("NULL")), varname] <- NA     
     transcript[, varname] <- as.numeric(transcript[, varname])
-  if (varname %in% c("SystolicBP",  "DiastolicBP")) {
+    ## Eliminate "unreasonable" values for numeric vars
+    if (varname %in% c("Height")) {
+      transcript[which(transcript[, varname] < 36), varname] <- NA 
+      transcript[which(transcript[, varname] > 96), varname] <- NA     
+    } else if (varname %in% c("Weight")) {
+      transcript[which(transcript[, varname] < 50), varname] <- NA 
+      transcript[which(transcript[, varname] > 500), varname] <- NA          
+    }else if (varname %in% c("SystolicBP",  "DiastolicBP")) {
       transcript[which(transcript[, varname] < 50), varname] <- NA 
       transcript[which(transcript[, varname] > 250), varname] <- NA 
-    } else if (varname %in% "BMI") {
-      transcript[which(transcript[, varname] < 17), varname] <- NA
-      transcript[which(transcript[, varname] > 50), varname] <- NA     
-    }    
+    } else if (varname %in% "BMI") {      
+      transcript[which(transcript[, varname] < 14), varname] <- NA
+      transcript[which(transcript[, varname] > 60), varname] <- NA     
+    } 
   }
-
   ## loop over numeric variables: 
-  maxCols <- lapply(num.vars, function(varname) {
-    return(by(transcript[, varname], transcript$PatientGuid, max))
+  medCols <- lapply(num.vars, function(varname) {
+    return(by(transcript[, varname], transcript$PatientGuid, median, na.rm=TRUE))
   })
-  maxCols <- do.call('cbind', maxCols)
-  colnames(maxCols) <- paste0(num.vars,".max")
-  meanCols <- lapply(num.vars, function(varname) {
-    return(by(transcript[, varname], transcript$PatientGuid, mean, na.rm=TRUE))
+  medCols <- do.call('cbind', medCols)  
+  colnames(medCols) <- paste0(num.vars,".med")
+  
+  ## impute missing BMI
+  flg_impute_BMI <- which(is.na(medCols[,"BMI.med"]) & !is.na(medCols[,"Height.med"]) & !is.na(medCols[,"Weight.med"]))
+  medCols[flg_impute_BMI, "BMI.med"] <- 
+    703*medCols[flg_impute_BMI,"Weight.med"]/(medCols[flg_impute_BMI,"Height.med"]^2) 
+  
+  ## impute missing BP
+  medCols[is.na(medCols[, "SystolicBP.med"] ), "SystolicBP.med"] <-  median(medCols[, "SystolicBP.med"], na.rm=TRUE)
+  medCols[is.na(medCols[, "DiastolicBP.med"] ), "DiastolicBP.med"] <-  median(medCols[, "DiastolicBP.med"], na.rm=TRUE)
+    
+  ## get overall physician specialty frequencies
+  freqTabledrType <- data.frame(prop.table(table(transcript$PhysicianSpecialty[!transcript$PhysicianSpecialty %in% c("","x Unknown or N/A")])))
+  colnames(freqTabledrType) <- c("drType", "Freq")
+  freqTabledrType <- freqTabledrType[order(freqTabledrType$Freq, decreasing=TRUE),]  
+  
+  ## get patient-level counts of dr visits by physicial specialty
+  drTypeList <- lapply(1:nDrTypes, function(d) {
+    counts <- ddply(transcript,c("PatientGuid"),  
+                    .fun = function(xx, drType) {
+                      c(count = sum(xx[,"PhysicianSpecialty"]==drType))
+                    }, drType = freqTabledrType$drType[d])  
+    return(counts$count)
   })  
-  meanCols <- do.call('cbind', meanCols) 
-  meanCols[which(is.nan(meanCols))] <- NA
-  colnames(meanCols) <- paste0(num.vars,".mean")
-  phys.Endo.Count <- ddply(transcript,.(PatientGuid),
-        summarize, count = sum(PhysicianSpecialty %in% c("Endocrinology; Diabetes; & Metabolism")))
-  AllCols = as.data.frame(cbind(maxCols, meanCols, phys.Endo.Count = phys.Endo.Count$count))
+  drTypeCols <- do.call('cbind', drTypeList) 
+  colnames(drTypeCols) <- paste0("ct.", gsub(" ", "", freqTabledrType$drType[1:nDrTypes]))
+    
+  AllCols = as.data.frame(cbind(medCols, drTypeCols))
   AllCols$PatientGuid = unique(transcript$PatientGuid)
+  
   flatDataset <- merge(flatDataset, AllCols, by="PatientGuid", all=TRUE)
  
 }
@@ -178,6 +198,9 @@ addDiagnosisVariables <- function(con, typeString, flatDataset, Ndiagnosis) {
   dgnAllCols$PatientGuid <- unique(tableToRead$PatientGuid)
   
   flatDataset <- merge(flatDataset, dgnAllCols, by="PatientGuid", all=TRUE)
+  for (colname in colnames(dgnAllCols)) {
+    flatDataset[is.na(flatDataset[, colname]), colname] <- 0
+  }
   return(flatDataset) 
 }
 

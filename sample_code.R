@@ -13,7 +13,8 @@
 
 library(RSQLite)
 library(randomForest)
-# Assumes sample_code_library.R is in current working directory
+library(plyr)
+library(psych)
 setwd("C:/Users/kathy/Documents/My Documents/Coursework/Fall_2015_Stats_229/Project")
 source(paste0(getwd(),"/CS-229-Project/sample_code_library.R"))
 
@@ -23,23 +24,35 @@ source(paste0(getwd(),"/CS-229-Project/sample_code_library.R"))
 n <- dbDriver("SQLite")
 con <- dbConnect(n, dbname="compData.db")
 
-
 # ================================================================================= #
 # Create dataset with Ndiagnosis, Nmedication, Nlab, AddTranscript
-train <- create_flattenedDataset(con, "training", 10, 0, 0, 1)
-#test <- create_flattenedDataset(con, "test", 2, 5, 3)
+train <- create_flattenedDataset(con, "training", 25, 0, 0, 1, 25)
+
+# Assign training and validation set
+set.seed(100)
+train.frac = 0.75
+obs.T <- sample(1:nrow(train), size = floor(train.frac*nrow(train)))
+
 
 # ================================================================================= #
 # Summary Statistics
-summary(train)
+summary(train[obs.T,])
+table(train[,"dmIndicator"])/nrow(train)
+## good summary of numeric variables
+desc.stats <- describeBy(train, "dmIndicator",mat=TRUE)
+write.csv(desc.stats, "desc.stats.csv")
+
+## possibly plot things
+require(ggplot2)
+ggplot(train[obs.T,], aes(x=ct.401.1_5digit, colour=as.factor(dmIndicator))) + geom_density()
+ggplot(train[obs.T,], aes(x=SystolicBP.med, y=DiastolicBP.med, colour=as.factor(dmIndicator))) + geom_point()
 
 # ================================================================================= #
 
-## Wrap all of this in cross-validation to produce MSE estimates
-
-
-rf <- randomForest(train[,3:ncol(train)], train$dmIndicator)
-rf_result <- predict(rf, test[,2:ncol(test)], type="response")
+## Random Forest
+## important:   make sure all predictors are numeric or factors
+rf <- randomForest(x=train[obs.T,3:ncol(train)], y=train$dmIndicator[obs.T], 
+                   ntree = 500, importance = TRUE)
 
 ## Boosting?
 ## SVM?
