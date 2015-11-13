@@ -1,0 +1,153 @@
+# Data Cleaning
+
+# INSTALL PACKAGES ===================================================================
+# install.packages("RSQLite")
+# install.packages("randomForest")
+# install.packages("doBy")
+
+# LOAD LIBRARIES =====================================================================
+library(RSQLite)
+library(randomForest)
+library(plyr)
+library(psych)
+library(ROCR)
+library(doBy)
+library(cvTools)
+library(MASS)
+
+# SET UP THE ENVIRONMENT =============================================================
+rm(list = ls(all = TRUE)) # clear work space
+setwd("C:/Users/Haju Kim/Dropbox/Stanford/2015-2016/1Q/CS 229/Project")
+source("C:/Users/Haju Kim/Dropbox/Stanford/2015-2016/1Q/CS 229/Project/sample_code_library.R")
+
+# OPEN CONNECTIONS ===================================================================
+n = dbDriver("SQLite")
+con = dbConnect(n, dbname= "compData.db")
+dbListTables(con)
+
+
+# PROCESS THE PATIENT DATA ============================================================
+# Load the data
+train_patient = dbGetQuery(con, "SELECT * FROM training_patient")
+test_patient = dbGetQuery(con, "SELECT * FROM test_patient")
+test_patient$dmIndicator = 1
+
+# Combine the data for easier data pre-processing
+train_patient$Type = "train"
+test_patient$Type = "test"
+patient = rbind(train_patient, test_patient)
+patient = patient[, c(ncol(patient), 1:ncol(patient)-1)] #re-order columns
+rm(train_patient, test_patient)
+
+# Convert the variables into appropriate types
+str(patient) # Check data types
+
+col_factor = which(names(patient)%in% c("Type", "dmIndicator", "Gender", "State"))
+patient[, col_factor] = lapply(patient[, col_factor], as.factor)
+rm(col_factor)
+
+str(patient) # Check data types
+
+# PROCESS THE TRANSCRIPTS DATA ===============================================================
+# Load the data
+train_transcript = dbGetQuery(con, "SELECT * FROM training_transcript")
+test_transcript = dbGetQuery(con, "SELECT * FROM test_transcript")
+
+# Combine the data for easier data pre-processing
+train_transcript$Type = "train"
+test_transcript$Type = "test"
+transcript = rbind(train_transcript, test_transcript)
+transcript = transcript[, c(ncol(transcript), 1:ncol(transcript)-1)] #re-order columns
+rm(train_transcript, test_transcript)
+
+# Convert the variables into appropriate types
+str(transcript)
+
+col_factor = which(names(transcript)%in% c("Type", "PhysicianSpecialty"))
+col_numeric = which(names(transcript)%in% c("Height", "Weight", "BMI", "SystolicBP", "DiastolicBP", "RespiratoryRate", "HeartRate", "Temperature"))
+
+transcript[, col_factor] = lapply(transcript[, col_factor], as.factor)
+transcript[, col_numeric] = lapply(transcript[, col_numeric], as.numeric)
+
+str(transcript)
+
+# Replace '0's to NA's (Unknowns)
+transcript[transcript == 0] = NA
+
+summary(transcript)
+
+# Weight, Height, BMI
+# Identify typo errors (Extreme outliers that seem unreasonable) & assign NA
+transcript$Height[transcript$Height < 40 | transcript$Height > 98] = NA
+transcript$Weight[transcript$Weight < 45 | transcript$Weight > 650] = NA
+
+# Record the median height/weight for each patient (using the multiple transcripts)
+height.median = summaryBy(Height~PatientGuid, data=transcript, FUN=median, na.rm = TRUE)
+weight.median = summaryBy(Weight~PatientGuid, data=transcript, FUN=median, na.rm = TRUE)
+
+transcript = merge(transcript, height.median, by = "PatientGuid", all.x = TRUE)
+transcript = merge(transcript, weight.median, by = "PatientGuid", all.x = TRUE)
+
+# Find the median BMI with median weight / height
+transcript$BMI.median = 703*transcript$Weight.median/(transcript$Height.median)^2
+
+# SystolicBP, DiastolicBP
+# Identify typo errors (Extreme outliers that seem unreasonable) & assign NA
+transcript$SystolicBP[transcript$SystolicBP < 50 | transcript$SystolicBP > 250] = NA
+transcript$DiastolicBP[transcript$DiastolicBP < 50 | transcript$DiastolicBP > 250] = NA
+
+# Record the median height/weight for each patient (using the multiple transcripts)
+SystolicBP.median = summaryBy(SystolicBP~PatientGuid, data=transcript, FUN=median, na.rm = TRUE)
+DiastolicBP.median = summaryBy(DiastolicBP~PatientGuid, data=transcript, FUN=median, na.rm = TRUE)
+
+transcript = merge(transcript, SystolicBP.median, by = "PatientGuid", all.x = TRUE)
+transcript = merge(transcript, DiastolicBP.median, by = "PatientGuid", all.x = TRUE)
+
+transcript$HighLowBP = transcript$SystolicBP.median - transcript$DiastolicBP.median
+
+# RespiratoryRate
+# Identify typo errors (Extreme outliers that seem unreasonable) & assign NA
+transcript$RespiratoryRate[transcript$RespiratoryRate < 6] = NA
+
+# Record the median repiratory rate for each patient (using the multiple transcripts)
+RespiratoryRate.median = summaryBy(RespiratoryRate~PatientGuid, data=transcript, FUN=median, na.rm = TRUE)
+transcript = merge(transcript, RespiratoryRate.median, by = "PatientGuid", all.x = TRUE)
+
+# HeartRate: drop this variable since none of the training set data contains this information
+transcript = subset(transcript, select = -c(HeartRate))
+
+# Temperature
+# Identify typo errors (Extreme outliers that seem unreasonable) & assign NA
+transcript$Temperature[transcript$Temperature < 95 | transcript$Temperature > 104] = NA
+
+# Record the median temperature for each patient (using the multiple transcripts)
+Temperature.median = summaryBy(Temperature~PatientGuid, data=transcript, FUN=median, na.rm = TRUE)
+transcript = merge(transcript, Temperature.median, by = "PatientGuid", all.x = TRUE)
+
+# PhysicianSpecialty
+TotalPhys.count = summaryBy(PhysicianSpecialty~PatientGuid, data=transcript, FUN=length) # transcripts (= # hospital visits?)
+#EndoPhys.count = summaryBy(PhysicianSpecialty~PatientGuid, data=transcript[transcript$PhysicianSpecialty == "Endocrinology; Diabetes; & Metabolism",], FUN=length)
+transcript = merge(transcript, TotalPhys.count, by = "PatientGuid", all.x = TRUE)
+#transcript = merge(transcript, EndoPhys.count, by = "PatientGuid", all.x = TRUE)
+transcript = rename(transcript, c("PhysicianSpecialty.length" = "NumTranscripts"))
+
+# Merge with Patient Data
+transcript1 = subset(transcript, select = c(PatientGuid, Type, BMI.median, SystolicBP.median, DiastolicBP.median, HighLowBP, 
+                                            RespiratoryRate.median, Temperature.median, NumTranscripts))
+transcript1 = unique(transcript1)
+patient = merge(patient, transcript1, by = "PatientGuid", all = FALSE)
+
+patient = subset(patient, select = -c(Type.y))
+patient = rename(patient, c("Type.x" = "Type"))
+patient_without_temp_respiratoryRate = subset(patient, select = -c(RespiratoryRate.median, Temperature.median))
+
+# Check rows with NA 
+row.has.na = apply(patient_without_temp_respiratoryRate, 1, function(x){any(is.na(x))})
+sum(row.has.na)
+patient.filtered = patient_without_temp_respiratoryRate[!row.has.na, ]
+patient.filtered = subset(patient.filtered, select = -c(PatientGuid, PracticeGuid))
+
+
+
+
+
