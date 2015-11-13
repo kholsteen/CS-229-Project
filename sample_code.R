@@ -104,6 +104,9 @@ abline(a=0,b=1,lwd=2,lty=2,col="gray")
 importance(df.train.rf)
 varImpPlot(df.train.rf)
 
+# Error rate plot
+plot(df.train.rf)
+
 
 # CROSS VALIDATION ===========================================================================
 ## Wrap all of this in cross-validation to produce MSE estimates
