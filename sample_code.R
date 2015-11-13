@@ -84,47 +84,58 @@ ggplot(df.train, aes(x=SystolicBP.med, y=DiastolicBP.med, colour=as.factor(dmInd
 #rf <- randomForest(x=train[obs.T,3:ncol(train)], y=train$dmIndicator[obs.T], 
                    ntree = 500, importance = TRUE)
 
-## Note: "df.train[,3:ncol(df.train)]" should be replaced with our final feature matrix X
-bestmtry = tuneRF(df.train[,3:ncol(df.train)],df.train$dmIndicator, ntreeTry=100, 
-                  stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE, dobest=FALSE)
-
-df.train.rf = randomForest(dmIndicator~.,data=df.train[,3:ncol(df.train)], mtry=2, ntree=1000, 
-                           keep.forest=TRUE, importance=TRUE, test=df.test)
-
-df.train.rf.pr = predict(df.train.rf, type="prob", newdata=df.test)[,2]
-
-df.train.pred = prediction(df.train.rf.pr, df.test$dmIndicator)
-df.train.perf = performance(df.train.pred,"tpr","fpr")
-
-# Plot ROC Curve
-plot(df.train.perf,main="ROC Curve for Random Forest",col=2,lwd=2)
-abline(a=0,b=1,lwd=2,lty=2,col="gray")
-
-# Variable Importance Plot
-importance(df.train.rf)
-varImpPlot(df.train.rf)
-
-# Error rate plot
-plot(df.train.rf)
-
 
 # CROSS VALIDATION ===========================================================================
-## Wrap all of this in cross-validation to produce MSE estimates
-# Note: For now, just use the train set to divide training/test set and see what the outcome is like ==========
+## Wrap all of this in cross-validation to produce AUC
 
-# Run cross validation to get the estimate 
+# ============ INSTALLATON =========================#
+install.packages("pROC")
 
-# Fit a linear model using all covariates to predict quality (Baseline model)
-# [Example]: model = lm(quality ~ ., data = train)
+# ============= LIBRARIES =========================#
+library(pROC)
 
-# Use cross validation to get an estimate for the prediction error (K = 10, Replication = 10)
-# model = MODEL_GOES_HERE
-model.cv = cvFit(model, data = df.train, y = df.train$dmIndicator, cost = mspe, K = 10, R = 10)
+#====================== CV for Random Forest=========================#
+# ASSUMPTION: COLUMN1: BINARY OUTCOME VARIABLE; REST: FEATURE MATRIX
+
+# Set Variable name
+train = df.train[,-1]
+
+# Set the number of folds (k)
+k = 10 
+
+# Initialize
+n = floor(nrow(train)/k)
+err.vect = rep(NA, k)
+
+# Loop over different folds to compute cross-validation error
+for(i in 1:k) {
+  index_start = ((i - 1) * n + 1) # starti index of the subset
+  index_end = (i * n) # end index of the subset
+  subset = index_start:index_end # range of the subset
+  
+  cv.train = train[-subset, ]
+  cv.test = train[subset, ]
+  
+  # TODO: Add bestmtry to find a better fit for the random forest
+  bestmtry = tuneRF(cv.train[, -1], cv.train[, 1], ntreeTry=100, 
+                  stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE, dobest=FALSE)
+  # Run the random forest on the train set
+  fit = randomForest(x = cv.train[, -1], y = as.factor(cv.train[, 1]), mtry=bestmtry, ntree=1000, keep.forest=TRUE, importance=TRUE)
+  
+  # Make predictions on the test set
+  prediction = predict(fit, newdata = cv.test[, -1], type = "prob")[, 2] #
+  
+  # Calculate the model's accuracy for the ith fold
+  err.vect[i] = auc(cv.test[,1], prediction)
+  print(paste("AUC (fold ", i, "): ", err.vect[i]))
+}
+
+print(paste("Avg. AUI: ", mean(err.vect)))
 
 
 # Out-of-Sample Test Error ==============================================================
 # Compute the prediction loss from the fitted values
-mspe(train$Y, predict(model), includeSE = TRUE)
+#mspe(train$Y, predict(model), includeSE = TRUE)
 
 
 ## Boosting?
