@@ -214,6 +214,55 @@ addMedicationVariables <- function(con, typeString, flatDataset, Nmedication) {
   #      medTable: medication table
   #      flatDataset: data frame to which features are added
   #      Nmedication: number of medication features to add
+  
+  SyncDiagnosis <- read.csv(file = "/Users/Maddy/Desktop/trainingSet/training_SyncDiagnosis.csv",
+			colClasses = c("factor", "factor", "factor", "factor",
+			"factor", "factor", "factor", "factor"))
+  SyncPatient <- read.csv(file = "/Users/Maddy/Desktop/trainingSet/training_SyncPatient.csv",
+ 			colClasses = c("factor", "integer", "factor", "integer", "factor", "factor"))
+  SyncMedication <- read.csv(file = "/Users/Maddy/Desktop/trainingSet/training_SyncMedication.csv",
+ 			colClasses = c("factor", "factor", "factor", "factor", "factor", "factor", "factor", "factor"))
+ 			
+  ## create a count variable in the medication data
+  count <- runif(length(SyncMedication[,1]), 1.0, 1.0)
+  SyncMedication <- cbind(SyncMedication, count, deparse.level = 1)
+  rm(count)
+  gc()
+
+  cntMedication <- dcast(SyncMedication, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMedication) <- c("PatientGuid",  "cntMedication")
+  SyncPatient <- merge(SyncPatient, cntMedication, all.x = TRUE, by = c("PatientGuid"))
+
+  SyncMed <- subset(SyncMedication, MedicationName == "Lisinopril oral tablet")
+  cntMed <- dcast(SyncMed, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMed) <- c("PatientGuid",  "cntMedLis")
+  SyncPatient <- merge(SyncPatient, cntMed, all.x = TRUE, by = c("PatientGuid"))
+  rm(SyncMed, cntMed)
+
+  SyncMed <- subset(SyncMedication, MedicationName == "Hydrochlorothiazide oral tablet")
+  cntMed <- dcast(SyncMed, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMed) <- c("PatientGuid",  "cntMedHyd")
+  SyncPatient <- merge(SyncPatient, cntMed, all.x = TRUE, by = c("PatientGuid"))
+  rm(SyncMed, cntMed)
+
+  SyncMed <- subset(SyncMedication, MedicationName == "Norvasc (amLODIPine) oral tablet")
+  cntMed <- dcast(SyncMed, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMed) <- c("PatientGuid",  "cntMedNor")
+  SyncPatient <- merge(SyncPatient, cntMed, all.x = TRUE, by = c("PatientGuid"))
+  rm(SyncMed, cntMed)
+
+  SyncMed <- subset(SyncMedication, MedicationName == "AmLODIPine Besylate (amLODIPine) oral tablet")
+  cntMed <- dcast(SyncMed, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMed) <- c("PatientGuid",  "cntMedAmL")
+  SyncPatient <- merge(SyncPatient, cntMed, all.x = TRUE, by = c("PatientGuid"))
+  rm(SyncMed, cntMed)
+
+  SyncMed <- subset(SyncMedication, MedicationName == "Hydrochlorothiazide-Lisinopril oral tablet")
+  cntMed <- dcast(SyncMed, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMed) <- c("PatientGuid",  "cntMedHydLis")
+  SyncPatient <- merge(SyncPatient, cntMed, all.x = TRUE, by = c("PatientGuid"))
+  rm(SyncMed, cntMed)
+  
   #
   # Returns
   #      flatDataset: input dataset with diagnosis features added
