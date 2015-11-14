@@ -28,8 +28,8 @@ library(reshape2)
 
 # Set up working directory 
 # # Katherine
- setwd("C:/Users/kathy/Documents/My Documents/Coursework/Fall_2015_Stats_229/Project")
- source(paste0(getwd(),"/CS-229-Project/sample_code_library.R"))
+# setwd("C:/Users/kathy/Documents/My Documents/Coursework/Fall_2015_Stats_229/Project")
+# source(paste0(getwd(),"/CS-229-Project/sample_code_library.R"))
 
 # # Haju
 # setwd("C:/Users/Haju Kim/Dropbox/Stanford/2015-2016/1Q/CS 229/Project")
@@ -43,7 +43,8 @@ dbListTables(con) # Display the list of all data tables
 
 # ================================================================================= #
 # Create dataset with Ndiagnosis, Nmedication, Nlab, AddTranscript
-train0 <- create_flattenedDataset(con, "training", 25, 0, 0, 1, 25)
+train0 <- create_flattenedDataset(con, "training", Ndiagnosis = 25, AddMedication = 1, 
+                                  Nlab = 0, AddTranscript = 1, nDrTypes = 25)
 ## assign patient Guid to row name
 rownames(train0) <- train0[,1]
 
@@ -55,10 +56,7 @@ train.ind = sample(1:nrow(df), 0.75*nrow(train0))
 df.train = train0[train.ind,2:ncol(train0)]
 df.test = train0[-train.ind,2:ncol(train0)]
 
-
-
 # Descriptive Statistics
-
 
 # ================================================================================= #
 # Summary Statistics
@@ -72,8 +70,8 @@ desc.stats <- describeBy(df.train, "dmIndicator",mat=TRUE)
 write.csv(desc.stats, "desc.stats.csv")
 
 ## Pairs plot to check if there's any variable that seems highly correlated
-ggpairs(df.train)
-
+ggpairs(df.train)        
+        
 ## possibly plot things
 require(ggplot2)
 ggplot(df.train, aes(x=ct.401.1_5digit, colour=as.factor(dmIndicator))) + geom_density()

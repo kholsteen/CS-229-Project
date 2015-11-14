@@ -8,7 +8,7 @@
 
 
 # ================================================================================= #
-create_flattenedDataset <- function(con, typeString, Ndiagnosis, Nmedication, Nlab, AddTranscript, nDrTypes) {
+create_flattenedDataset <- function(con, typeString, Ndiagnosis, AddMedication, Nlab, AddTranscript, nDrTypes) {
 # create_flattenedDataset()
 # A given patient will have mulitple diagnoses, medication, labs, prescriptions, etc.
 # This function does a simple flattening procedure whereby the top N most 
@@ -46,7 +46,7 @@ create_flattenedDataset <- function(con, typeString, Ndiagnosis, Nmedication, Nl
   }
   else {
     if ( Ndiagnosis > 0 ) { flatDataset <- addDiagnosisVariables(con, "training", flatDataset, Ndiagnosis) }
-    if ( Nmedication > 0 ) { flatDataset <- addMedicationVariables(con, "training", flatDataset, Nmedication) }
+    if ( AddMedication > 0 ) { flatDataset <- addMedicationVariables(con, "training", flatDataset) }
     if ( Nlab >0 ) { flatDataset <- addLabsVariables(con, "training", flatDataset, Nlab) }
     if (AddTranscript > 0) {flatDataset <- addTranscriptVariables(con, "training", flatDataset, nDrTypes)}
   }  
@@ -205,44 +205,53 @@ addDiagnosisVariables <- function(con, typeString, flatDataset, Ndiagnosis) {
 }
 
 # ================================================================================= #
-addMedicationVariables <- function(con, typeString, flatDataset, Nmedication) {
-  # addMedicationVariables()
-  # Adds specified number of medication features (Nmedication) to the input flatDataset.
-  # Medication features are identified by medication name.
-  #
-  # Arguments
-  #      medTable: medication table
-  #      flatDataset: data frame to which features are added
-  #      Nmedication: number of medication features to add
-  #
-  # Returns
-  #      flatDataset: input dataset with diagnosis features added
+addMedicationVariables <- function(con, typeString, flatDataset) {
+
+  SyncMedication <- dbGetQuery(con, "SELECT * FROM training_medication")
+  count <- runif(length(SyncMedication[,1]), 1.0, 1.0)
+  SyncMedication <- cbind(SyncMedication, count, deparse.level = 1)
+  rm(count)
+  gc()
   
-  # Create frequency table determined by training set.
-  # Train and test sets need to reference the same features.
-  train_medTable <- dbGetQuery(con, "SELECT * FROM training_medication")
-  freqTable <- data.frame(prop.table(table(train_medTable$MedicationName)))  
-  colnames(freqTable) <- c("MedName", "Freq")
-  freqTable$MedName <- levels(droplevels(freqTable$MedName))  # formating step: remove factors to get MedName as strings
-  freqTable <- freqTable[order(freqTable$Freq, decreasing=TRUE),]
-  write.csv(freqTable, "freqTable_Meds.csv")
+  cntMedication <- dcast(SyncMedication, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMedication) <- c("PatientGuid",  "cntMedication")
+  flatDataset <- merge(flatDataset, cntMedication, all.x = TRUE, by = c("PatientGuid"))
+  flatDataset[is.na(flatDataset[,ncol(flatDataset)]),ncol(flatDataset)]<-0 
   
-  if ( typeString == "test" ) {
-    tableToRead <- dbGetQuery(con, "SELECT * FROM test_medication")
-  }
-  else {
-    tableToRead <- train_medTable
-  }  
+  SyncMed <- subset(SyncMedication, MedicationName == "Lisinopril oral tablet")
+  cntMed <- dcast(SyncMed, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMed) <- c("PatientGuid",  "cntMedLis")
+  flatDataset <- merge(flatDataset, cntMed, all.x = TRUE, by = c("PatientGuid"))
+  rm(SyncMed, cntMed)
+  flatDataset[is.na(flatDataset[,ncol(flatDataset)]),ncol(flatDataset)]<-0 
   
-  ## Identify hypertension and other classes of medications
+  SyncMed <- subset(SyncMedication, MedicationName == "Hydrochlorothiazide oral tablet")
+  cntMed <- dcast(SyncMed, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMed) <- c("PatientGuid",  "cntMedHyd")
+  flatDataset <- merge(flatDataset, cntMed, all.x = TRUE, by = c("PatientGuid"))
+  rm(SyncMed, cntMed)
+  flatDataset[is.na(flatDataset[,ncol(flatDataset)]),ncol(flatDataset)]<-0 
   
-  for ( i in 1:Nmedication ) {
-    hasFeature <- unique(subset(tableToRead, MedicationName==freqTable[i,1])$PatientGuid)
-    indCol <- rep(0, length(flatDataset[,1]))
-    indCol[flatDataset$PatientGuid %in% hasFeature] <- 1
-    flatDataset <- cbind(flatDataset, indCol)
-    colnames(flatDataset)[length(flatDataset)] <- freqTable[i,1]
-  }
+  SyncMed <- subset(SyncMedication, MedicationName == "Norvasc (amLODIPine) oral tablet")
+  cntMed <- dcast(SyncMed, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMed) <- c("PatientGuid",  "cntMedNor")
+  flatDataset <- merge(flatDataset, cntMed, all.x = TRUE, by = c("PatientGuid"))
+  rm(SyncMed, cntMed)
+  flatDataset[is.na(flatDataset[,ncol(flatDataset)]),ncol(flatDataset)]<-0 
+  
+  SyncMed <- subset(SyncMedication, MedicationName == "AmLODIPine Besylate (amLODIPine) oral tablet")
+  cntMed <- dcast(SyncMed, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMed) <- c("PatientGuid",  "cntMedAmL")
+  flatDataset <- merge(flatDataset, cntMed, all.x = TRUE, by = c("PatientGuid"))
+  rm(SyncMed, cntMed)
+  flatDataset[is.na(flatDataset[,ncol(flatDataset)]),ncol(flatDataset)]<-0 
+  
+  SyncMed <- subset(SyncMedication, MedicationName == "Hydrochlorothiazide-Lisinopril oral tablet")
+  cntMed <- dcast(SyncMed, PatientGuid ~ count, sum, value.var = "count")
+  names(cntMed) <- c("PatientGuid",  "cntMedHydLis")
+  flatDataset <- merge(flatDataset, cntMed, all.x = TRUE, by = c("PatientGuid"))
+  rm(SyncMed, cntMed)
+  flatDataset[is.na(flatDataset[,ncol(flatDataset)]),ncol(flatDataset)]<-0 
   
   return(flatDataset)
 }
