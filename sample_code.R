@@ -168,6 +168,8 @@ varImpPlot(fit.all, n.var=20, type=1, main = "Variable Importance in Random Fore
 
 ## Error analysis
 ## Confusion matrix
+fit.all$confusion
+
 ## What kind of examples is it getting wrong?
 
 #myPred <- data.frame(test$PatientGuid, rf_result)
