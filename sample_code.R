@@ -24,6 +24,7 @@ library(cvTools)
 library(MASS)
 library(GGally)
 library(ggplot2)
+library(reshape2)
 
 # Set up working directory 
 # # Katherine
