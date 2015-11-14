@@ -51,7 +51,7 @@ rownames(train0) <- train0[,1]
 # ================================================================================= #
 # Split the data into training and test sets
 set.seed(123)
-train.ind = sample(1:nrow(df), 0.75*nrow(train0))
+train.ind = sample(1:nrow(train0), 0.75*nrow(train0))
 ## remove column 1 (patient guid)
 df.train = train0[train.ind,2:ncol(train0)]
 df.test = train0[-train.ind,2:ncol(train0)]
