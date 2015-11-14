@@ -27,8 +27,8 @@ library(ggplot2)
 
 # Set up working directory 
 # # Katherine
-# setwd("C:/Users/kathy/Documents/My Documents/Coursework/Fall_2015_Stats_229/Project")
-# source(paste0(getwd(),"/CS-229-Project/sample_code_library.R"))
+ setwd("C:/Users/kathy/Documents/My Documents/Coursework/Fall_2015_Stats_229/Project")
+ source(paste0(getwd(),"/CS-229-Project/sample_code_library.R"))
 
 # # Haju
 # setwd("C:/Users/Haju Kim/Dropbox/Stanford/2015-2016/1Q/CS 229/Project")
@@ -42,16 +42,17 @@ dbListTables(con) # Display the list of all data tables
 
 # ================================================================================= #
 # Create dataset with Ndiagnosis, Nmedication, Nlab, AddTranscript
-train <- create_flattenedDataset(con, "training", 25, 0, 0, 1, 25)
-
+train0 <- create_flattenedDataset(con, "training", 25, 0, 0, 1, 25)
+## assign patient Guid to row name
+rownames(train0) <- train0[,1]
 
 # ================================================================================= #
 # Split the data into training and test sets
-df = train
 set.seed(123)
-train.ind = sample(1:nrow(df), 0.75*nrow(df))
-df.train = df[train.ind,]
-df.test = df[-train.ind,]
+train.ind = sample(1:nrow(df), 0.75*nrow(train0))
+## remove column 1 (patient guid)
+df.train = train0[train.ind,2:ncol(train0)]
+df.test = train0[-train.ind,2:ncol(train0)]
 
 
 
@@ -82,7 +83,7 @@ ggplot(df.train, aes(x=SystolicBP.med, y=DiastolicBP.med, colour=as.factor(dmInd
 ## Random Forest
 ## important:   make sure all predictors are numeric or factors
 #rf <- randomForest(x=train[obs.T,3:ncol(train)], y=train$dmIndicator[obs.T], 
-                   ntree = 500, importance = TRUE)
+#                   ntree = 500, importance = TRUE)
 
 
 # CROSS VALIDATION ===========================================================================
@@ -98,14 +99,17 @@ library(pROC)
 # ASSUMPTION: COLUMN1: BINARY OUTCOME VARIABLE; REST: FEATURE MATRIX
 
 # Set Variable name
-train = df.train[,-1]
+
 
 # Set the number of folds (k)
 k = 10 
-
+ntrees = 500
 # Initialize
-n = floor(nrow(train)/k)
-err.vect = rep(NA, k)
+n = floor(nrow(df.train)/k)
+err.vect.test = rep(NA, k)
+err.vect.train = rep(NA, k)
+
+## randomize 
 
 # Loop over different folds to compute cross-validation error
 for(i in 1:k) {
@@ -113,24 +117,46 @@ for(i in 1:k) {
   index_end = (i * n) # end index of the subset
   subset = index_start:index_end # range of the subset
   
-  cv.train = train[-subset, ]
-  cv.test = train[subset, ]
+  cv.train = df.train[-subset, ]
+  cv.test = df.train[subset, ]
   
   # TODO: Add bestmtry to find a better fit for the random forest
-  bestmtry = tuneRF(cv.train[, -1], cv.train[, 1], ntreeTry=100, 
-                  stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE, dobest=FALSE)
+  #bestmtry = tuneRF(cv.train[, -1], cv.train[, 1], ntreeTry=100, 
+  #                stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE, dobest=FALSE)
   # Run the random forest on the train set
-  fit = randomForest(x = cv.train[, -1], y = as.factor(cv.train[, 1]), mtry=bestmtry, ntree=1000, keep.forest=TRUE, importance=TRUE)
   
-  # Make predictions on the test set
-  prediction = predict(fit, newdata = cv.test[, -1], type = "prob")[, 2] #
+  fit = randomForest(x = cv.train[, -1], y = as.factor(cv.train[, 1]), ntree=ntrees, do.trace=TRUE, keep.forest=TRUE, importance=TRUE)
+    
+  # Make predictions on the test set    
+  fitted = predict(fit, newdata = cv.train[, -1], type = "prob")[, 2]
+  prediction = predict(fit, newdata = cv.test[, -1], type = "prob")[, 2]
   
   # Calculate the model's accuracy for the ith fold
-  err.vect[i] = auc(cv.test[,1], prediction)
-  print(paste("AUC (fold ", i, "): ", err.vect[i]))
+  err.vect.test[i] = auc(cv.test[,1], prediction)
+  err.vect.train[i] = auc(cv.train[,1], fitted)
+  
+  print(paste("Test AUC (fold ", i, "): ", err.vect.test[i]))
+  print(paste("Trainin AUC (fold ", i, "): ", err.vect.train[i]))
 }
 
-print(paste("Avg. AUI: ", mean(err.vect)))
+print(paste("Avg. Test AUI: ", mean(err.vect.test)))
+print(paste("Avg. Training AUI: ", mean(err.vect.train)))
+
+fit.all = randomForest(x = df.train[, -1], y = as.factor(df.train[, 1]), ntree=100, 
+                       do.trace=TRUE, keep.forest=TRUE, importance=TRUE)
+## training ROC
+fitted = predict(fit.all, newdata = df.train[, -1], type = "prob")[, 2]
+roc.train <- roc(df.train[, 1], fitted)
+plot.roc(smooth(roc.train), main = "Training and Test ROC", lty=2)
+
+## test ROC on same plot
+oob.pred = predict(fit.all, type = "prob")[, 2]
+roc.test <- roc(df.train[, 1], oob.pred)
+plot.roc(smooth(roc.test), add=TRUE, lty=1)
+legend("bottomright", legend = c("Training", "Test"), lty = c(2, 1))
+
+# variable importance plot
+varImpPlot(fit.all, n.var=20, type=1, main = "Variable Importance in Random Forest")
 
 
 # Out-of-Sample Test Error ==============================================================
