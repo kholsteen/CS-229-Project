@@ -2,13 +2,15 @@
 # Function library called by sample_code.R for the Practice Fusion Diabetes Classification Competition.
 #
 # Requires the provided SQLite database.
-# 7-July-2012
+# 19 Nov 2015:  
+#   - Eliminated TypeString
+#   - Replaced ICD-9 digits with CCS groupings for diagnosis features
+#   - Added ratios of CCS dgn counts to total #transcripts
+#   - Added ratios of physician type counts to total #transcripts
+#   - Corrected assignment of patientGuid to transcript and diagnosis features
 # ================================================================================= #
 
-
-
-# ================================================================================= #
-create_flattenedDataset <- function(con, typeString, Ndiagnosis, AddMedication, Nlab, AddTranscript, nDrTypes) {
+create_flattenedDataset <- function(con,  Ndiagnosis, AddMedication, Nlab, AddTranscript, nDrTypes) {
 # create_flattenedDataset()
 # A given patient will have mulitple diagnoses, medication, labs, prescriptions, etc.
 # This function does a simple flattening procedure whereby the top N most 
@@ -20,7 +22,6 @@ create_flattenedDataset <- function(con, typeString, Ndiagnosis, AddMedication, 
 #
 # Arugments
 #       con: SQLite connection
-#       typeString: test or training 
 #       Ndiagnosis: Number of diagnosis features to include (by ICD9 code)
 #       Nmedication: Number of medciation features to include (by medication name)
 #       Nlab: Number of lab features to include (by HL7 text)
@@ -29,27 +30,13 @@ create_flattenedDataset <- function(con, typeString, Ndiagnosis, AddMedication, 
 #       Data frame with one patientGuid per row. 
 #       Columns are [indicator] [Ndiagnosis + Nmedication + Nlab features]
   
-  if ( typeString == "test" ) {
-    patientTable <- dbGetQuery(con, "SELECT * FROM test_patient")
-    patientDemo <-   subset(patientTable, select=c("PatientGuid", "Gender", "YearOfBirth"))
-    flatDataset <- patientDemo 
-  }
-  else {
-    patientTable <- dbGetQuery(con, "SELECT * FROM training_patient")
-    patientDemo <-   subset(patientTable, select=c("PatientGuid", "dmIndicator", "Gender", "YearOfBirth", "State"))
-    flatDataset <- patientDemo
-  }
-  if ( typeString == "test" ) {
-    if ( Ndiagnosis > 0 ) { flatDataset <- addDiagnosisVariables(con, "test", flatDataset, Ndiagnosis) }
-    if ( Nmedication > 0 ) {flatDataset <- addMedicationVariables(con, "test", flatDataset, Nmedication) }
-    if ( Nlab > 0 ) { flatDataset <- addLabsVariables(con, "test", flatDataset, Nlab) }
-  }
-  else {
-    if ( Ndiagnosis > 0 ) { flatDataset <- addDiagnosisVariables(con, "training", flatDataset, Ndiagnosis) }
-    if ( AddMedication > 0 ) { flatDataset <- addMedicationVariables(con, "training", flatDataset) }
-    if ( Nlab >0 ) { flatDataset <- addLabsVariables(con, "training", flatDataset, Nlab) }
-    if (AddTranscript > 0) {flatDataset <- addTranscriptVariables(con, "training", flatDataset, nDrTypes)}
-  }  
+  patientTable <- dbGetQuery(con, "SELECT * FROM training_patient")
+  flatDataset <-   subset(patientTable, select=c("PatientGuid", "dmIndicator", "Gender", "YearOfBirth", "State"))
+  
+  if (AddTranscript > 0) {flatDataset <- addTranscriptVariables(con, flatDataset, nDrTypes)}
+  if ( Ndiagnosis > 0 ) { flatDataset <- addDiagnosisVariables(con, flatDataset, Ndiagnosis) }
+  if ( AddMedication > 0 ) { flatDataset <- addMedicationVariables(con, flatDataset) }
+  if ( Nlab >0 ) { flatDataset <- addLabsVariables(con, flatDataset, Nlab) }
   
   ## eliminate patient with missing diabetes indicator or year of birth
   flatDataset <- flatDataset[!is.na(flatDataset$dmIndicator) & !is.na(flatDataset$YearOfBirth),]    
@@ -60,7 +47,7 @@ create_flattenedDataset <- function(con, typeString, Ndiagnosis, AddMedication, 
   return(flatDataset) 
 }
 # ================================================================================= #
-addTranscriptVariables <- function(con, typeString, flatDataset, nDrTypes) {
+addTranscriptVariables <- function(con,  flatDataset, nDrTypes) {
   
   transcript <- dbGetQuery(con, "SELECT * FROM training_transcript")
   # get median of numeric variables
@@ -114,17 +101,31 @@ addTranscriptVariables <- function(con, typeString, flatDataset, nDrTypes) {
   })  
   drTypeCols <- do.call('cbind', drTypeList) 
   colnames(drTypeCols) <- paste0("ct.", gsub(" ", "", freqTabledrType$drType[1:nDrTypes]))
-    
-  AllCols = as.data.frame(cbind(medCols, drTypeCols))
-  AllCols$PatientGuid = unique(transcript$PatientGuid)
   
-  flatDataset <- merge(flatDataset, AllCols, by="PatientGuid", all=TRUE)
- 
+  ## count overall number of transcripts (=dr visits)
+  ct.Transcripts <- as.vector(by(transcript, transcript$PatientGuid, nrow))
+    
+  ## calculate ratios between counts of physician visits by type and overall # transcripts
+  drType.Transcripts.Ratio <- drTypeCols/ct.Transcripts
+  colnames(drType.Transcripts.Ratio) <- paste0("rto.", gsub(" ", "", freqTabledrType$drType[1:nDrTypes]))
+
+  AllCols = as.data.frame(cbind(medCols, drTypeCols, ct.Transcripts=ct.Transcripts, 
+                                drType.Transcripts.Ratio))
+  ## add PatientGuids in sorted order (matching order of by/ddply)
+  guids <- unique(transcript$PatientGuid)
+  AllCols$PatientGuid <- guids[order(guids)]
+  flatDataset <- merge(flatDataset, AllCols, by="PatientGuid", all.x=TRUE)
+  
+  ## Replace NA with zeros
+  for (colname in c(colnames(drTypeCols), "ct.Transcripts", colnames(drType.Transcripts.Ratio))) {
+    flatDataset[is.na(flatDataset[, colname]), colname] <- 0
+  }
+  return(flatDataset)
 }
 
 
 # ================================================================================= #
-addDiagnosisVariables <- function(con, typeString, flatDataset, Ndiagnosis) {
+addDiagnosisVariables <- function(con,  flatDataset, Ndiagnosis) {
 # addDiagnosisVariables()
 # Adds Ndiagnosis diagnosis features to the input flatDataset.
 # Diagnosis features to include are determined by frequency in the training set
@@ -132,7 +133,6 @@ addDiagnosisVariables <- function(con, typeString, flatDataset, Ndiagnosis) {
 #
 # Arguments
 #      con: SQLite connection
-#      typeString: "test" or "training"
 #      flatDataset: data frame to which features are added
 #      Ndiagnosis: number of diagnosis features to add
 #
@@ -145,67 +145,71 @@ addDiagnosisVariables <- function(con, typeString, flatDataset, Ndiagnosis) {
                               LEFT JOIN training_diagnosis d 
                               ON d.DiagnosisGuid = td.DiagnosisGuid")
   
-  ## create table of most common 5-digit (full) ICD-9 codes
-  freqTable5digit <- data.frame(prop.table(table(train_dxTable$ICD9Code)))
-  colnames(freqTable5digit) <- c("ICD9", "Freq")
-  freqTable5digit$ICD9 <- levels(droplevels(freqTable5digit$ICD9))  # formating step: remove factors to get ICD9 as strings
-  freqTable5digit <- freqTable5digit[order(freqTable5digit$Freq, decreasing=TRUE),]
+  ## read in CCS diagnosis groupings csv file
+  ccs <- read.csv(paste0(ccs_path, "CCS_Diagnoses.csv"), header=FALSE, stringsAsFactors=FALSE)
+  ccs.key <- ccs[!is.na(ccs[, 1]),]
+  names(ccs.key) <- c("id", "name")
+  ccs.key$startrow = as.numeric(rownames(ccs.key)) + 1
   
-  ## create table of most common 1st 3-digits of ICD-9 codes (more general category)
-  ## get substrings
-  train_dxTable$ICD9_3digit <- substr(train_dxTable$ICD9Code,1,3)
-  ## create frequency table
-  freqTable3digit <- data.frame(prop.table(table(train_dxTable$ICD9_3digit)))
-  colnames(freqTable3digit) <- c("ICD9", "Freq")
-  freqTable3digit$ICD9 <- levels(droplevels(freqTable3digit$ICD9)) 
-  freqTable3digit <- freqTable3digit[order(freqTable3digit$Freq, decreasing=TRUE),] 
+  ## iterate over keys to create key-value matches 
+  ccs.dgn.list <- lapply(1:nrow(ccs.key), function(i) {
+    ccs.value <- c()
+    if (i < nrow(ccs.key)) {
+      endrow <- ccs.key$startrow[i+1]-2
+    } else if (i == nrow(ccs.key)) {
+      endrow <- nrow(ccs)
+    }    
+   # if (ccs.key$startrow[i] > endrow) { print(ccs.key[i, 1:3])}
+    for (j in ccs.key$startrow[i]:endrow) {
+      ccs.value <- c(ccs.value, unlist(strsplit(as.character(ccs[j,2]), " ")))
+    }
+    return(ccs.value)
+  })  
+  names(ccs.dgn.list) <- ccs.key$id
   
-  if ( typeString == "test" ) {
-    tableToRead <- dbGetQuery(con, 
-                              "SELECT * FROM test_transcriptdiagnosis td 
-                              LEFT JOIN test_diagnosis d 
-                              ON d.DiagnosisGuid = td.DiagnosisGuid")
-    ## get substrings for test set
-    tableToRead$ICD9_3digit <- substr(tableToRead$ICD9Code,1,3)
-  }
-  else {
-    tableToRead <- train_dxTable
-  }
-
-  ## count the number of instances of the given code
-  ## considering only the Ndiagnosis most common codes
-  dgn5digitList <- lapply(1:Ndiagnosis, function(d) {
-    counts <- ddply(tableToRead,c("PatientGuid"),  
-                    .fun = function(xx, dgn) {
-                      c(count = sum(xx[,"ICD9Code"]==dgn))
-                    }, dgn= freqTable5digit[d,1])
+  ##modify ICD-9 codes to match CCS code format (add leading zeros, remove decimal)
+  left.of.point <- unlist(strsplit(train_dxTable$ICD9Code, "[.]"))
+  train_dxTable$ICD9_CCS <- ""
+  train_dxTable$ICD9_CCS[nchar(left.of.point[1])==3] <- gsub("[.]", "", train_dxTable$ICD9Code[nchar(left.of.point[1])==3])
+  train_dxTable$ICD9_CCS[nchar(left.of.point[1])==2] <- paste0("0",gsub("[.]", "", train_dxTable$ICD9Code[nchar(left.of.point[1])==2]))
+  train_dxTable$ICD9_CCS[nchar(left.of.point[1])==1] <- paste0("00", gsub("[.]", "", train_dxTable$ICD9Code[nchar(left.of.point[1])==1]))
+  
+  ## iterate over keys and count dgns within each key  
+  ## Implement do parallel
+  if (!is.numeric(Ndiagnosis)) {Ndiagnosis = nrow(ccs.key)}
+    ccs.ct.list <- lapply(1:Ndiagnosis, function(k) {  
+      counts <- ddply(train_dxTable,c("PatientGuid"),  
+                    .fun = function(xx, dgn.list) {
+                      c(count = sum(gsub("[.]", "", xx[,"ICD9_CCS"]) %in% dgn.list))
+                    }, dgn.list = ccs.dgn.list[[k]])
     return(counts$count)
-  })    
-  dgn5digitCols <- do.call('cbind', dgn5digitList)
-  colnames(dgn5digitCols) <- paste0("ct.", freqTable5digit$ICD9[1:Ndiagnosis], "_5digit")
-      
-  dgn3digitList <- lapply(1:Ndiagnosis, function(d) {
-    counts <- ddply(tableToRead,c("PatientGuid"),  
-                      .fun = function(xx, dgn) {
-        c(count = sum(xx[,"ICD9_3digit"]==dgn))
-        }, dgn= freqTable3digit[d,1])  
-    return(counts$count)
-      })  
-  dgn3digitCols <- do.call('cbind', dgn3digitList) 
-  colnames(dgn3digitCols) <- paste0("ct.", freqTable3digit$ICD9[1:Ndiagnosis], "_3digit") 
-    
-  dgnAllCols <- as.data.frame(cbind(dgn5digitCols, dgn3digitCols))
-  dgnAllCols$PatientGuid <- unique(tableToRead$PatientGuid)
+  })      
+  ## combine into data frame that can be merged with flatDataset
+  ccs.ct.Cols <- data.frame(do.call(cbind, ccs.ct.list))
+  colnames(ccs.ct.Cols) <- paste0("ct.ccs.", ccs.key$id[1:Ndiagnosis])
   
-  flatDataset <- merge(flatDataset, dgnAllCols, by="PatientGuid", all=TRUE)
-  for (colname in colnames(dgnAllCols)) {
+  ## add PatientGuids in sorted order (matching order of by/ddply)  
+  guids <- unique(train_dxTable$PatientGuid)
+  ccs.ct.Cols$PatientGuid <- guids[order(guids)]
+  
+  flatDataset <- merge(flatDataset, ccs.ct.Cols, by = c("PatientGuid"), all.x=TRUE)
+  for (colname in colnames(ccs.ct.Cols)) {
     flatDataset[is.na(flatDataset[, colname]), colname] <- 0
   }
+
+  ## calculate ratio s of ccs counts to total # transcripts (if total # transcripts is present)
+  if ("ct.Transcripts" %in% colnames(flatDataset)) {     
+    ## initialize
+    flatDataset[, paste0("rto.ccs.", ccs.key$id[1:Ndiagnosis])] <- 0
+    ## calculate ratios for subjects with nonzero # transcripts
+    flatDataset[, paste0("rto.ccs.", ccs.key$id[1:Ndiagnosis])] <- 
+      flatDataset[flatDataset$ct.Transcripts>0, colnames(ccs.ct.Cols)[-ncol(ccs.ct.Cols)]]/flatDataset$ct.Transcripts[flatDataset$ct.Transcripts>0]
+  } 
   return(flatDataset) 
 }
 
 # ================================================================================= #
-addMedicationVariables <- function(con, typeString, flatDataset) {
+addMedicationVariables <- function(con,  flatDataset) {
 
   SyncMedication <- dbGetQuery(con, "SELECT * FROM training_medication")
   count <- runif(length(SyncMedication[,1]), 1.0, 1.0)
@@ -258,7 +262,7 @@ addMedicationVariables <- function(con, typeString, flatDataset) {
 
 
 # ================================================================================= #
-addLabsVariables <- function(con, typeString, flatDataset, Nlab) {
+addLabsVariables <- function(con,  flatDataset, Nlab) {
 # addLabsVariables()
 # Adds specified number of medication features (Nlabs) to the input flatDataset.
 # Lab features are identified by HL7 text
@@ -278,13 +282,8 @@ addLabsVariables <- function(con, typeString, flatDataset, Nlab) {
   colnames(freqTable) <- c("HL7text", "Freq")
   freqTable$HL7text <- levels(droplevels(freqTable$HL7text))  # formating step: remove factors to get HL7Text as strings
   freqTable <- freqTable[order(freqTable$Freq, decreasing=TRUE),]
-  
-  if ( typeString == "test" ) {
-    tableToRead <- dbGetQuery(con, "SELECT * FROM test_labs")
-  }
-  else {
-    tableToRead <- train_labsTable
-  }  
+  tableToRead <- train_labsTable
+    
   
   for ( i in 1:Nlab ) {
     hasFeature <- unique(subset(tableToRead, HL7Text==freqTable[i,1])$PatientGuid)

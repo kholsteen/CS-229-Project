@@ -1,4 +1,3 @@
-
 # sample_code.R
 # Sample code for the Practice Fusion Diabetes Classification Competition.
 # This codes provides an example of how to flatten the data set features for
@@ -7,8 +6,7 @@
 #
 # Requires the provided SQLite database.
 # Requires file sample_code_library.R
-# 7-July-2012
-#
+
 # ================================================================================= #
 # Clear work space
 rm(list = ls(all = TRUE)) 
@@ -30,6 +28,13 @@ library(reshape2)
 # # Katherine
 # setwd("C:/Users/kathy/Documents/My Documents/Coursework/Fall_2015_Stats_229/Project")
 # source(paste0(getwd(),"/CS-229-Project/sample_code_library.R"))
+# ccs_path = ("C:/Users/kathy/Documents/My Documents/Coursework/Fall_2015_Stats_229/Project/CS-229-Project")
+
+## Katherine 2
+#setwd("/E/holsteen/Kathy/CS229Project/")
+#source(paste0(getwd(),"/sample_code_library.R"))
+#ccs_path = ("/E/holsteen/Kathy/CS229Project/")
+
 
 # # Haju
 # setwd("C:/Users/Haju Kim/Dropbox/Stanford/2015-2016/1Q/CS 229/Project")
@@ -43,7 +48,8 @@ dbListTables(con) # Display the list of all data tables
 
 # ================================================================================= #
 # Create dataset with Ndiagnosis, Nmedication, Nlab, AddTranscript
-train0 <- create_flattenedDataset(con, "training", Ndiagnosis = 25, AddMedication = 1, 
+# Ndiagnosis:  use an integer or "max" will include all the CCS categories
+train0 <- create_flattenedDataset(con, Ndiagnosis = "max", AddMedication = 1, 
                                   Nlab = 0, AddTranscript = 1, nDrTypes = 25)
 ## assign patient Guid to row name
 rownames(train0) <- train0[,1]
@@ -56,6 +62,11 @@ train.ind = sample(1:nrow(train0), 0.75*nrow(train0))
 df.train = train0[train.ind,2:ncol(train0)]
 df.test = train0[-train.ind,2:ncol(train0)]
 
+## sample evenly from dmIndicator = 1/0
+df.train.even = rbind(df.train[df.train$dmIndicator == 1,], 
+                      df.train[sample(x=which(df.train$dmIndicator == 0),
+                                      size = sum(df.train$dmIndicator == 1)),])
+
 # Descriptive Statistics
 
 # ================================================================================= #
@@ -66,6 +77,7 @@ summary(df.train)
 prop.table(table(df.train$dmIndicator))
 
 # Summary of numeric variables
+tapply(df.train, df.train$dmIndicator, summary)
 desc.stats <- describeBy(df.train, "dmIndicator",mat=TRUE)
 write.csv(desc.stats, "desc.stats.csv")
 
@@ -110,57 +122,62 @@ err.vect.train = rep(NA, k)
 
 ## randomize 
 
+### CV may not be necessary for random forest because we can use OOB error as test error
 # Loop over different folds to compute cross-validation error
-for(i in 1:k) {
-  index_start = ((i - 1) * n + 1) # starti index of the subset
-  index_end = (i * n) # end index of the subset
-  subset = index_start:index_end # range of the subset
-  
-  cv.train = df.train[-subset, ]
-  cv.test = df.train[subset, ]
-  
-  # TODO: Add bestmtry to find a better fit for the random forest
-  #bestmtry = tuneRF(cv.train[, -1], cv.train[, 1], ntreeTry=100, 
-  #                stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE, dobest=FALSE)
-  # Run the random forest on the train set
-  
-  fit = randomForest(x = cv.train[, -1], y = as.factor(cv.train[, 1]), ntree=ntrees, do.trace=TRUE, keep.forest=TRUE, importance=TRUE)
-    
-  # Make predictions on the test set    
-  fitted = predict(fit, newdata = cv.train[, -1], type = "prob")[, 2]
-  prediction = predict(fit, newdata = cv.test[, -1], type = "prob")[, 2]
-  
-  # Calculate the model's accuracy for the ith fold
-  err.vect.test[i] = auc(cv.test[,1], prediction)
-  err.vect.train[i] = auc(cv.train[,1], fitted)
-  
-  print(paste("Test AUC (fold ", i, "): ", err.vect.test[i]))
-  print(paste("Trainin AUC (fold ", i, "): ", err.vect.train[i]))
-}
-
-print(paste("Avg. Test AUI: ", mean(err.vect.test)))
-print(paste("Avg. Training AUI: ", mean(err.vect.train)))
-
-fit.all = randomForest(x = df.train[, -1], y = as.factor(df.train[, 1]), ntree=100, 
+# for(i in 1:k) {
+#   index_start = ((i - 1) * n + 1) # starti index of the subset
+#   index_end = (i * n) # end index of the subset
+#   subset = index_start:index_end # range of the subset
+#   
+#   cv.train = df.train[-subset, ]
+#   cv.test = df.train[subset, ]
+#   
+#   # TODO: Add bestmtry to find a better fit for the random forest
+#   #bestmtry = tuneRF(cv.train[, -1], cv.train[, 1], ntreeTry=100, 
+#   #                stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE, dobest=FALSE)
+#   # Run the random forest on the train set
+#   
+#   fit = randomForest(x = cv.train[, -1], y = as.factor(cv.train[, 1]), ntree=ntrees, do.trace=TRUE, keep.forest=TRUE, importance=TRUE)
+#     
+#   # Make predictions on the test set    
+#   fitted = predict(fit, newdata = cv.train[, -1], type = "prob")[, 2]
+#   prediction = predict(fit, newdata = cv.test[, -1], type = "prob")[, 2]
+#   
+#   # Calculate the model's accuracy for the ith fold
+#   err.vect.test[i] = auc(cv.test[,1], prediction)
+#   err.vect.train[i] = auc(cv.train[,1], fitted)
+#   
+#   print(paste("Test AUC (fold ", i, "): ", err.vect.test[i]))
+#   print(paste("Trainin AUC (fold ", i, "): ", err.vect.train[i]))
+# }
+# 
+# print(paste("Avg. Test AUI: ", mean(err.vect.test)))
+# print(paste("Avg. Training AUI: ", mean(err.vect.train)))
+#bestmtry = tuneRF(df.train.even[, -1], df.train.even[, 1], ntreeTry=500, 
+#               stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
+# 
+fit.all = randomForest(x = df.train.even[, -1], y = as.factor(df.train.even[, 1]), ntree=ntrees, 
                        do.trace=TRUE, keep.forest=TRUE, importance=TRUE)
-## training ROC
-fitted = predict(fit.all, newdata = df.train[, -1], type = "prob")[, 2]
-roc.train <- roc(df.train[, 1], fitted)
+
+## training ROC based on fitted values
+fitted = predict(fit.all, newdata = df.train.even[, -1], type = "prob")[, 2]
+roc.train <- roc(df.train.even[, 1], fitted)
 plot.roc(smooth(roc.train), main = "Training and Test ROC", lty=2)
 
-## test ROC on same plot
+
+## test ROC on same plot based on OOB error
 oob.pred = predict(fit.all, type = "prob")[, 2]
-roc.test <- roc(df.train[, 1], oob.pred)
+roc.test <- roc(df.train.even[, 1], oob.pred)
 plot.roc(smooth(roc.test), add=TRUE, lty=1)
-legend("bottomright", legend = c("Training", "Test"), lty = c(2, 1))
+legend("bottomright", legend = c("Training", "Test (OOB)"), lty = c(2, 1))
+
+## Add AUC text
+(auc.train <- auc(df.train.even[,1], fitted))
+(auc.test <- auc(df.train.even[,1], oob.pred))
+text(x=c(.65, .4), y=c(.9, .65), label=c(paste0('Training AUC = ', round(auc.train, 2)), paste0('Test AUC = ', round(auc.test, 2))))
 
 # variable importance plot
-varImpPlot(fit.all, n.var=20, type=1, main = "Variable Importance in Random Forest")
-
-
-# Out-of-Sample Test Error ==============================================================
-# Compute the prediction loss from the fitted values
-#mspe(train$Y, predict(model), includeSE = TRUE)
+varImpPlot(fit.all, n.var=15, type=1, main = "Variable Importance in Random Forest")
 
 
 ## Boosting?
