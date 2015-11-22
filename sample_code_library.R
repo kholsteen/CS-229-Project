@@ -2,12 +2,11 @@
 # Function library called by sample_code.R for the Practice Fusion Diabetes Classification Competition.
 #
 # Requires the provided SQLite database.
-# 19 Nov 2015:  
+# 18 Nov 2015:  
 #   - Eliminated TypeString
 #   - Replaced ICD-9 digits with CCS groupings for diagnosis features
 #   - Added ratios of CCS dgn counts to total #transcripts
 #   - Added ratios of physician type counts to total #transcripts
-#   - Corrected assignment of patientGuid to transcript and diagnosis features
 # ================================================================================= #
 
 create_flattenedDataset <- function(con,  Ndiagnosis, AddMedication, Nlab, AddTranscript, nDrTypes) {
@@ -111,7 +110,6 @@ addTranscriptVariables <- function(con,  flatDataset, nDrTypes) {
 
   AllCols = as.data.frame(cbind(medCols, drTypeCols, ct.Transcripts=ct.Transcripts, 
                                 drType.Transcripts.Ratio))
-  ## add PatientGuids in sorted order (matching order of by/ddply)
   guids <- unique(transcript$PatientGuid)
   AllCols$PatientGuid <- guids[order(guids)]
   flatDataset <- merge(flatDataset, AllCols, by="PatientGuid", all.x=TRUE)
@@ -141,10 +139,11 @@ addDiagnosisVariables <- function(con,  flatDataset, Ndiagnosis) {
   
   # Create frequency table of ICD9 codes as determined by training set.
   # Train and test sets need to reference the same features.
+  # why are we joining the transcript diagnosis to the diagnosis?
   train_dxTable <- dbGetQuery(con, "SELECT * FROM training_transcriptdiagnosis td 
-                              LEFT JOIN training_diagnosis d 
+                              INNER JOIN training_diagnosis d 
                               ON d.DiagnosisGuid = td.DiagnosisGuid")
-  
+
   ## read in CCS diagnosis groupings csv file
   ccs <- read.csv(paste0(ccs_path, "CCS_Diagnoses.csv"), header=FALSE, stringsAsFactors=FALSE)
   ccs.key <- ccs[!is.na(ccs[, 1]),]
@@ -167,28 +166,43 @@ addDiagnosisVariables <- function(con,  flatDataset, Ndiagnosis) {
   })  
   names(ccs.dgn.list) <- ccs.key$id
   
-  ##modify ICD-9 codes to match CCS code format (add leading zeros, remove decimal)
+  ##modify ICD-9 codes to match CCS code format (add leading & trailing zeros, remove decimal)
   left.of.point <- unlist(strsplit(train_dxTable$ICD9Code, "[.]"))
   train_dxTable$ICD9_CCS <- ""
   train_dxTable$ICD9_CCS[nchar(left.of.point[1])==3] <- gsub("[.]", "", train_dxTable$ICD9Code[nchar(left.of.point[1])==3])
   train_dxTable$ICD9_CCS[nchar(left.of.point[1])==2] <- paste0("0",gsub("[.]", "", train_dxTable$ICD9Code[nchar(left.of.point[1])==2]))
   train_dxTable$ICD9_CCS[nchar(left.of.point[1])==1] <- paste0("00", gsub("[.]", "", train_dxTable$ICD9Code[nchar(left.of.point[1])==1]))
-  
+  train_dxTable$ICD9_CCS <- toupper(train_dxTable$ICD9_CCS)
+
+  ccs.present <- sapply(train_dxTable$ICD9_CCS, function(dgn){
+    sum(unlist(lapply(ccs.dgn.list, function(dgn.list) {
+      return(dgn %in% dgn.list)
+      })))})
+#  s <- cbind(train_dxTable[which(ccs.present!=1), c("ICD9Code", "ICD9_CCS")], ct = ccs.present[which(ccs.present!=1)])
+#    su <- ddply(.data = s, .variables = c("ICD9Code", "ICD9_CCS", "ct"),  .fun = function(xx) {
+#      c(count = nrow(xx))
+#    })
+#    su.sorted <- su[order(su$count, decreasing = TRUE),]
+#    write.csv(su.sorted,"codes_to_review.csv")  
+#   
+  ccs.freqList <- unlist(lapply(ccs.dgn.list, function(dgn.list) {
+    sum(train_dxTable[,"ICD9_CCS"] %in% dgn.list)
+  }))
+  ccs.freqTable <- data.frame(cbind(id = ccs.key$id, freq = ccs.freqList))
+  ccs.freqTable <- ccs.freqTable[order(ccs.freqTable$freq, decreasing=TRUE),]
+
   ## iterate over keys and count dgns within each key  
-  ## Implement do parallel
   if (!is.numeric(Ndiagnosis)) {Ndiagnosis = nrow(ccs.key)}
-    ccs.ct.list <- lapply(1:Ndiagnosis, function(k) {  
+    ccs.ct.list <- lapply(ccs.freqTable$id[1:Ndiagnosis], function(id) {  
       counts <- ddply(train_dxTable,c("PatientGuid"),  
                     .fun = function(xx, dgn.list) {
-                      c(count = sum(gsub("[.]", "", xx[,"ICD9_CCS"]) %in% dgn.list))
-                    }, dgn.list = ccs.dgn.list[[k]])
+                      c(count = sum(xx[,"ICD9_CCS"] %in% dgn.list))
+                    }, dgn.list = ccs.dgn.list[[as.character(id)]])
     return(counts$count)
   })      
   ## combine into data frame that can be merged with flatDataset
   ccs.ct.Cols <- data.frame(do.call(cbind, ccs.ct.list))
-  colnames(ccs.ct.Cols) <- paste0("ct.ccs.", ccs.key$id[1:Ndiagnosis])
-  
-  ## add PatientGuids in sorted order (matching order of by/ddply)  
+  colnames(ccs.ct.Cols) <- paste0("ct.ccs.", ccs.freqTable$id[1:Ndiagnosis])
   guids <- unique(train_dxTable$PatientGuid)
   ccs.ct.Cols$PatientGuid <- guids[order(guids)]
   
@@ -200,9 +214,9 @@ addDiagnosisVariables <- function(con,  flatDataset, Ndiagnosis) {
   ## calculate ratio s of ccs counts to total # transcripts (if total # transcripts is present)
   if ("ct.Transcripts" %in% colnames(flatDataset)) {     
     ## initialize
-    flatDataset[, paste0("rto.ccs.", ccs.key$id[1:Ndiagnosis])] <- 0
+    flatDataset[, paste0("rto.ccs.", ccs.freqTable$id[1:Ndiagnosis])] <- 0
     ## calculate ratios for subjects with nonzero # transcripts
-    flatDataset[, paste0("rto.ccs.", ccs.key$id[1:Ndiagnosis])] <- 
+    flatDataset[, paste0("rto.ccs.", ccs.freqTable$id[1:Ndiagnosis])] <- 
       flatDataset[flatDataset$ct.Transcripts>0, colnames(ccs.ct.Cols)[-ncol(ccs.ct.Cols)]]/flatDataset$ct.Transcripts[flatDataset$ct.Transcripts>0]
   } 
   return(flatDataset) 

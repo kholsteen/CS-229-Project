@@ -23,6 +23,7 @@ library(MASS)
 library(GGally)
 library(ggplot2)
 library(reshape2)
+library(e1071)
 
 # Set up working directory 
 # # Katherine
@@ -31,9 +32,9 @@ library(reshape2)
 # ccs_path = ("C:/Users/kathy/Documents/My Documents/Coursework/Fall_2015_Stats_229/Project/CS-229-Project")
 
 ## Katherine 2
-#setwd("/E/holsteen/Kathy/CS229Project/")
-#source(paste0(getwd(),"/sample_code_library.R"))
-#ccs_path = ("/E/holsteen/Kathy/CS229Project/")
+setwd("/E/holsteen/Kathy/CS229Project/")
+source(paste0(getwd(),"/sample_code_library.R"))
+ccs_path = ("/E/holsteen/Kathy/CS229Project/")
 
 
 # # Haju
@@ -48,9 +49,8 @@ dbListTables(con) # Display the list of all data tables
 
 # ================================================================================= #
 # Create dataset with Ndiagnosis, Nmedication, Nlab, AddTranscript
-# Ndiagnosis:  use an integer or "max" will include all the CCS categories
-train0 <- create_flattenedDataset(con, Ndiagnosis = "max", AddMedication = 1, 
-                                  Nlab = 0, AddTranscript = 1, nDrTypes = 25)
+train0 <- create_flattenedDataset(con, Ndiagnosis = 50, AddMedication = 1, 
+                                  Nlab = 0, AddTranscript = 1, nDrTypes = 2)
 ## assign patient Guid to row name
 rownames(train0) <- train0[,1]
 
@@ -62,7 +62,6 @@ train.ind = sample(1:nrow(train0), 0.75*nrow(train0))
 df.train = train0[train.ind,2:ncol(train0)]
 df.test = train0[-train.ind,2:ncol(train0)]
 
-## sample evenly from dmIndicator = 1/0
 df.train.even = rbind(df.train[df.train$dmIndicator == 1,], 
                       df.train[sample(x=which(df.train$dmIndicator == 0),
                                       size = sum(df.train$dmIndicator == 1)),])
@@ -153,9 +152,9 @@ err.vect.train = rep(NA, k)
 # 
 # print(paste("Avg. Test AUI: ", mean(err.vect.test)))
 # print(paste("Avg. Training AUI: ", mean(err.vect.train)))
-#bestmtry = tuneRF(df.train.even[, -1], df.train.even[, 1], ntreeTry=500, 
-#               stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
-# 
+bestmtry = tuneRF(df.train.even[, -1], df.train.even[, 1], ntreeTry=500, 
+               stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
+
 fit.all = randomForest(x = df.train.even[, -1], y = as.factor(df.train.even[, 1]), ntree=ntrees, 
                        do.trace=TRUE, keep.forest=TRUE, importance=TRUE)
 
@@ -179,14 +178,19 @@ text(x=c(.65, .4), y=c(.9, .65), label=c(paste0('Training AUC = ', round(auc.tra
 # variable importance plot
 varImpPlot(fit.all, n.var=15, type=1, main = "Variable Importance in Random Forest")
 
-
 ## Boosting?
-## SVM?
+##=================== SVM =============================
+
+set.seed(45)
+tune.out = tune(svm, dmIndicator ~., data = df.train.even, 
+                kernel = "polynomial", degree = 2,
+                ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100)))
+svm.fit <- svm(dmIndicator ~., data = df.train.even, 
+    kernel = "polynomial", degree = 2, cost = 1, cross = 10)
+
 
 ## Error analysis
 ## Confusion matrix
-fit.all$confusion
-
 ## What kind of examples is it getting wrong?
 
 #myPred <- data.frame(test$PatientGuid, rf_result)
