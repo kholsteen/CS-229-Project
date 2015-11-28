@@ -30,7 +30,7 @@ create_flattenedDataset <- function(con,  Ndiagnosis, AddMedication, Nlab, AddTr
 #       Columns are [indicator] [Ndiagnosis + Nmedication + Nlab features]
   
   patientTable <- dbGetQuery(con, "SELECT * FROM training_patient")
-  flatDataset <-   subset(patientTable, select=c("PatientGuid", "dmIndicator", "Gender", "YearOfBirth", "State"))
+  flatDataset <-   subset(patientTable, select=c("PatientGuid", "dmIndicator", "Gender", "YearOfBirth"))
   
   if (AddTranscript > 0) {flatDataset <- addTranscriptVariables(con, flatDataset, nDrTypes)}
   if ( Ndiagnosis > 0 ) { flatDataset <- addDiagnosisVariables(con, flatDataset, Ndiagnosis) }
@@ -41,8 +41,8 @@ create_flattenedDataset <- function(con,  Ndiagnosis, AddMedication, Nlab, AddTr
   flatDataset <- flatDataset[!is.na(flatDataset$dmIndicator) & !is.na(flatDataset$YearOfBirth),]    
   flatDataset$Gender <- as.factor(flatDataset$Gender)
   flatDataset$dmIndicator <- as.factor(flatDataset$dmIndicator)
-  flatDataset$State <- as.factor(flatDataset$State)  
-  flatDataset$PatientGuid <- as.factor(flatDataset$PatientGuid)  
+  flatDataset$PatientGuid <- as.factor(flatDataset$PatientGuid) 
+  
   return(flatDataset) 
 }
 # ================================================================================= #
@@ -84,7 +84,14 @@ addTranscriptVariables <- function(con,  flatDataset, nDrTypes) {
   ## impute missing BP
   medCols[is.na(medCols[, "SystolicBP.med"] ), "SystolicBP.med"] <-  median(medCols[, "SystolicBP.med"], na.rm=TRUE)
   medCols[is.na(medCols[, "DiastolicBP.med"] ), "DiastolicBP.med"] <-  median(medCols[, "DiastolicBP.med"], na.rm=TRUE)
-    
+  
+  ## get flag for high BP
+#   flg_bp_high <- cbind(by(transcript[, c("DiastolicBP", "SystolicBP")], transcript$PatientGuid, function(dset) {
+#       ct.D80 <- sum(!is.na(dset$DiastolicBP) & dset$DiastolicBP > 80)
+#       ct.S130 <- sum(!is.na(dset$SystolicBP) & dset$SystolicBP > 130)
+#       return(as.integer(ct.D80 >= 2 || ct.S130 >= 1))
+#     }))
+  
   ## get overall physician specialty frequencies
   freqTabledrType <- data.frame(prop.table(table(transcript$PhysicianSpecialty[!transcript$PhysicianSpecialty %in% c("","x Unknown or N/A")])))
   colnames(freqTabledrType) <- c("drType", "Freq")
@@ -140,7 +147,12 @@ addDiagnosisVariables <- function(con,  flatDataset, Ndiagnosis) {
   # Create frequency table of ICD9 codes as determined by training set.
   # Train and test sets need to reference the same features.
   # why are we joining the transcript diagnosis to the diagnosis?
-  train_dxTable <- dbGetQuery(con, "SELECT * FROM training_transcriptdiagnosis td 
+  train_dxTable <- dbGetQuery(con, "SELECT PatientGuid, 
+                                           TranscriptDiagnosisGuid,
+                                           TranscriptGuid,
+                                           d.DiagnosisGuid,
+                                           ICD9Code
+                              FROM training_transcriptdiagnosis td 
                               INNER JOIN training_diagnosis d 
                               ON d.DiagnosisGuid = td.DiagnosisGuid")
 
@@ -184,10 +196,11 @@ addDiagnosisVariables <- function(con,  flatDataset, Ndiagnosis) {
 #    })
 #    su.sorted <- su[order(su$count, decreasing = TRUE),]
 #    write.csv(su.sorted,"codes_to_review.csv")  
-#   
+  
   ccs.freqList <- unlist(lapply(ccs.dgn.list, function(dgn.list) {
-    sum(train_dxTable[,"ICD9_CCS"] %in% dgn.list)
-  }))
+     sum(train_dxTable[,"ICD9_CCS"] %in% dgn.list)
+   }))
+ 
   ccs.freqTable <- data.frame(cbind(id = ccs.key$id, freq = ccs.freqList))
   ccs.freqTable <- ccs.freqTable[order(ccs.freqTable$freq, decreasing=TRUE),]
 
@@ -203,6 +216,7 @@ addDiagnosisVariables <- function(con,  flatDataset, Ndiagnosis) {
   ## combine into data frame that can be merged with flatDataset
   ccs.ct.Cols <- data.frame(do.call(cbind, ccs.ct.list))
   colnames(ccs.ct.Cols) <- paste0("ct.ccs.", ccs.freqTable$id[1:Ndiagnosis])
+
   guids <- unique(train_dxTable$PatientGuid)
   ccs.ct.Cols$PatientGuid <- guids[order(guids)]
   
@@ -210,15 +224,22 @@ addDiagnosisVariables <- function(con,  flatDataset, Ndiagnosis) {
   for (colname in colnames(ccs.ct.Cols)) {
     flatDataset[is.na(flatDataset[, colname]), colname] <- 0
   }
-
+  
+  flatDataset$ct.DGNs <- rowSums(flatDataset[, colnames(ccs.ct.Cols)[-ncol(ccs.ct.Cols)]])
+  flatDataset$ct.ccs.Distinct <- rowSums(flatDataset[, colnames(ccs.ct.Cols)[-ncol(ccs.ct.Cols)]]>0)
+  
   ## calculate ratio s of ccs counts to total # transcripts (if total # transcripts is present)
   if ("ct.Transcripts" %in% colnames(flatDataset)) {     
     ## initialize
     flatDataset[, paste0("rto.ccs.", ccs.freqTable$id[1:Ndiagnosis])] <- 0
+    flatDataset$rto.DGNs <- 0
     ## calculate ratios for subjects with nonzero # transcripts
-    flatDataset[, paste0("rto.ccs.", ccs.freqTable$id[1:Ndiagnosis])] <- 
+    flatDataset[flatDataset$ct.Transcripts>0, paste0("rto.ccs.", ccs.freqTable$id[1:Ndiagnosis])] <- 
       flatDataset[flatDataset$ct.Transcripts>0, colnames(ccs.ct.Cols)[-ncol(ccs.ct.Cols)]]/flatDataset$ct.Transcripts[flatDataset$ct.Transcripts>0]
-  } 
+    flatDataset$rto.DGNs[flatDataset$ct.Transcripts>0] <- 
+      flatDataset$ct.DGNs[flatDataset$ct.Transcripts>0]/flatDataset$ct.Transcripts[flatDataset$ct.Transcripts>0]
+    } 
+  ## is it possible to have positive dgn and zero transcripts?
   return(flatDataset) 
 }
 

@@ -76,6 +76,7 @@ summary(df.train)
 prop.table(table(df.train$dmIndicator))
 
 # Summary of numeric variables
+summary.by <- by(df.train, df.train$dmIndicator, summary)
 tapply(df.train, df.train$dmIndicator, summary)
 desc.stats <- describeBy(df.train, "dmIndicator",mat=TRUE)
 write.csv(desc.stats, "desc.stats.csv")
@@ -84,8 +85,10 @@ write.csv(desc.stats, "desc.stats.csv")
 ggpairs(df.train)        
         
 ## possibly plot things
-require(ggplot2)
-ggplot(df.train, aes(x=ct.401.1_5digit, colour=as.factor(dmIndicator))) + geom_density()
+ggplot(df.train, aes(x=(ct.ccs.128>0)+(ct.ccs.127>0), colour=as.factor(dmIndicator))) + geom_density()
+ggplot(df.train, aes(x=(ct.ccs.9899>0)+(ct.ccs.53>0)+(BMI.med>30), colour=as.factor(dmIndicator))) + geom_density()
+
+
 ggplot(df.train, aes(x=SystolicBP.med, y=DiastolicBP.med, colour=as.factor(dmIndicator))) + geom_point()
 
 # ================================================================================= #
@@ -155,14 +158,15 @@ err.vect.train = rep(NA, k)
 bestmtry = tuneRF(df.train.even[, -1], df.train.even[, 1], ntreeTry=500, 
                stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
 
-fit.all = randomForest(x = df.train.even[, -1], y = as.factor(df.train.even[, 1]), ntree=ntrees, 
+# Try tuning the M or the number of trees?
+fit.all = randomForest(x = df.train.even[, -1], y = as.factor(df.train.even[, 1]), 
+                       ntree=ntrees,  mtry = 6,
                        do.trace=TRUE, keep.forest=TRUE, importance=TRUE)
-
 ## training ROC based on fitted values
 fitted = predict(fit.all, newdata = df.train.even[, -1], type = "prob")[, 2]
 roc.train <- roc(df.train.even[, 1], fitted)
-plot.roc(smooth(roc.train), main = "Training and Test ROC", lty=2)
-
+#plot.roc(smooth(roc.train), main = "Training and Test ROC", lty=2)
+plot.roc(roc.train, main = "Training and Test ROC", lty=2)
 
 ## test ROC on same plot based on OOB error
 oob.pred = predict(fit.all, type = "prob")[, 2]
@@ -178,15 +182,66 @@ text(x=c(.65, .4), y=c(.9, .65), label=c(paste0('Training AUC = ', round(auc.tra
 # variable importance plot
 varImpPlot(fit.all, n.var=15, type=1, main = "Variable Importance in Random Forest")
 
-## Boosting?
+
+## test the different sample sizes to create error vs. sample size plot
+
+obs <- seq(from = 400, to = 2800, by = 400)
+method <- "svm"
+error.obs <- sapply(obs, function(nobs) {
+  
+  obs.touse <- sample(x = 1:nrow(df.train.even), size = nobs)
+  print(nobs)
+  df.try <- df.train.even[obs.touse,]
+  
+  if (method == "rf") {
+    fit.all = randomForest(x = df.try[, -1], y = as.factor(df.try[, 1]), 
+                           ntree=ntrees)
+    
+    ## training ROC based on fitted values
+    fitted = predict(fit.all, newdata = df.try[, -1], type = "prob")[, 2]
+    auc.train <- as.numeric(roc(df.try[, 1], fitted)$auc)
+
+    oob.pred = predict(fit.all, type = "prob")[, 2]
+    auc.test <- as.numeric(roc(df.try[, 1], oob.pred)$auc)
+    
+    allnew.pred <- predict(fit.all, newdata = df.test[, -1], 
+                           type = "response")
+    allnew.error <- sum(df.test[, 1] != allnew.pred)/nrow(df.test)
+    
+    return(c(auc.train, auc.test, fit.all$err.rate[ntrees], allnew.error))
+  } else if (method == "svm"){    
+    
+    svm.fit <- svm(dmIndicator ~., data = df.try, 
+                   kernel = "linear", cost = 1, cross = 5)
+    train.error <- sum(svm.fit$fitted != df.try$dmIndicator)/nrow(df.try)
+    test.error <- 1 - (svm.fit$tot.accuracy)/100
+    return(c(train.error, test.error))
+  }
+}
+)
+
+plot(obs, error.obs[1,], pch = 1, ylim = range(0, .4), 
+     main = "Error vs. Sample Size\n SVM with Linear Kernel",
+     ylab = "Classification Error", xlab = "Sample Size")
+points(obs, error.obs[2,], pch = 2, col = "red")
+legend("bottomright", legend = c("Training Error", "Test (CV) Error"), 
+       pch = c(1,2), col = c("black", "red"))
+
+
+
+## Boosting???
+
+## Naive Bayes??  average preds from multiple methods?
+
 ##=================== SVM =============================
 
 set.seed(45)
 tune.out = tune(svm, dmIndicator ~., data = df.train.even, 
-                kernel = "polynomial", degree = 2,
+                kernel = "linear",
                 ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100)))
 svm.fit <- svm(dmIndicator ~., data = df.train.even, 
-    kernel = "polynomial", degree = 2, cost = 1, cross = 10)
+    kernel = "linear", cost = 1, cross = 10)
+
 
 
 ## Error analysis
