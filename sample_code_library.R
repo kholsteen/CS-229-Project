@@ -9,7 +9,7 @@
 #   - Added ratios of physician type counts to total #transcripts
 # ================================================================================= #
 
-create_flattenedDataset <- function(con,  Ndiagnosis, AddMedication, Nlab, AddTranscript, nDrTypes) {
+create_flattenedDataset <- function(con,  Ndiagnosis, AddMedication, AddLab, AddTranscript, nDrTypes, AddSmoke) {
 # create_flattenedDataset()
 # A given patient will have mulitple diagnoses, medication, labs, prescriptions, etc.
 # This function does a simple flattening procedure whereby the top N most 
@@ -35,7 +35,8 @@ create_flattenedDataset <- function(con,  Ndiagnosis, AddMedication, Nlab, AddTr
   if (AddTranscript > 0) {flatDataset <- addTranscriptVariables(con, flatDataset, nDrTypes)}
   if ( Ndiagnosis > 0 ) { flatDataset <- addDiagnosisVariables(con, flatDataset, Ndiagnosis) }
   if ( AddMedication > 0 ) { flatDataset <- addMedicationVariables(con, flatDataset) }
-  if ( Nlab >0 ) { flatDataset <- addLabsVariables(con, flatDataset, Nlab) }
+  if ( AddLab >0 ) { flatDataset <- addLabsVariables(con, flatDataset) }
+  if (AddSmoke > 0 ) { flatDataset <- addSmokeVariables(con, flatDataset) }
   
   ## eliminate patient with missing diabetes indicator or year of birth
   flatDataset <- flatDataset[!is.na(flatDataset$dmIndicator) & !is.na(flatDataset$YearOfBirth),]    
@@ -292,12 +293,33 @@ addMedicationVariables <- function(con,  flatDataset) {
   rm(SyncMed, cntMed)
   flatDataset[is.na(flatDataset[,ncol(flatDataset)]),ncol(flatDataset)]<-0 
   
+  flatDataset$ct.Chol.Med <- 
+    rowSums(flatDataset[, c("cntMedHydLis", "cntMedAmL", "cntMedNor", "cntMedHyd")])
+  
   return(flatDataset)
 }
 
+addSmokeVariables <- function(con,  flatDataset) {
+  train_smoke <- dbGetQuery(con, "SELECT PatientGuid, SmokingStatusGuid, EffectiveYear 
+                            FROM training_patientSmokingStatus") 
+  ## reassign statuses for simplicity
+  smoke_status <- read.csv("SyncSmokingStatus.csv")
+  smoke_status_key <- smoke_status[, c("SmokingStatusGuid", "Smoke_Code")]
+  train_smoke <- merge(train_smoke, smoke_status_key, by = "SmokingStatusGuid", all.x = TRUE )
+  ## in case of multiple status observations, take smoker over non-smoker and non-smoker over unknown 
+  train_smoke_max <- data.frame(as.matrix(by(train_smoke$Smoke_Code, train_smoke$PatientGuid, max)))
+  colnames(train_smoke_max) <- "Smoke_Code"
+  ## make into factor
+  train_smoke_max$PatientGuid <- rownames(train_smoke_max)
+  train_smoke_max$Smoke_Code <- as.factor(train_smoke_max$Smoke_Code)
+  flatDataset <- merge(flatDataset, train_smoke_max, by = "PatientGuid", all.x = TRUE)
+  ## assign "unknown" to missing values
+  flatDataset$Smoke_Code[is.na(flatDataset$Smoke_Code)] <- 0
+  return(flatDataset)
+}
 
 # ================================================================================= #
-addLabsVariables <- function(con,  flatDataset, Nlab) {
+addLabsVariables <- function(con,  flatDataset) {
 # addLabsVariables()
 # Adds specified number of medication features (Nlabs) to the input flatDataset.
 # Lab features are identified by HL7 text
@@ -312,22 +334,66 @@ addLabsVariables <- function(con,  flatDataset, Nlab) {
   
   # Create frequency table determined by training set.
   # Train and test sets need to reference the same features.
-  train_labsTable <- dbGetQuery(con, "SELECT * FROM training_labs")  
-  freqTable <- data.frame(prop.table(table(train_labsTable$HL7Text)))
-  colnames(freqTable) <- c("HL7text", "Freq")
-  freqTable$HL7text <- levels(droplevels(freqTable$HL7text))  # formating step: remove factors to get HL7Text as strings
-  freqTable <- freqTable[order(freqTable$Freq, decreasing=TRUE),]
-  tableToRead <- train_labsTable
-    
   
-  for ( i in 1:Nlab ) {
-    hasFeature <- unique(subset(tableToRead, HL7Text==freqTable[i,1])$PatientGuid)
-    indCol <- rep(0, length(flatDataset[,1]))
-    indCol[flatDataset$PatientGuid %in% hasFeature] <- 1
-    flatDataset <- cbind(flatDataset, indCol)
-    colnames(flatDataset)[length(flatDataset)] <- freqTable[i,1]
-  }
+  ## create a count variable in lab result data
+  labResult <- dbGetQuery(con, "SELECT * FROM training_labResult") 
+  labObs <-dbGetQuery(con, "SELECT * FROM training_labObservation") 
+  labPanel <- dbGetQuery(con, "SELECT * FROM training_labPanel") 
   
-  return(flatDataset) 
+  count <- runif(length(labResult[,1]), 1.0, 1.0)
+  labResult <- cbind(labResult, count, deparse.level = 1)
+  rm(count)
+  gc()
+  
+  ## create and merge labcount
+  LabCount <- dcast(labResult, PatientGuid ~ count, sum, value.var = "count")
+  names(LabCount) <- c("PatientGuid", "LabCount")
+  flatDataset <- merge(flatDataset, LabCount, all.x = TRUE, by = c("PatientGuid"))
+  
+  flatDataset$LabCount[is.na(flatDataset$LabCount)] <- 0
+  
+  ## lab test types
+  
+  labResultFilt <- subset(labResult, select = c("PatientGuid", "LabResultGuid", "count"))
+  labPanel <- merge(labPanel, labResultFilt, by = c("LabResultGuid"))
+  
+  labPanelCMP <- subset(labPanel, PanelName == "Comp. Metabolic Panel (14)")
+  labPanelCMP <- dcast(labPanelCMP, PatientGuid ~ count, sum, value.var = "count")
+  names(labPanelCMP) <- c("PatientGuid", "labPanelCMP")
+  flatDataset <- merge(flatDataset, labPanelCMP, all.x = TRUE, by = c("PatientGuid"))
+  flatDataset$labPanelCMP[is.na(flatDataset$labPanelCMP)] <- 0
+  
+  labPanelLP <- subset(labPanel, PanelName == "Lipid Panel")
+  labPanelLP <- dcast(labPanelLP, PatientGuid ~ count, sum, value.var = "count")
+  names(labPanelLP) <- c("PatientGuid", "labPanelLP")
+  flatDataset <- merge(flatDataset, labPanelLP, all.x = TRUE, by = c("PatientGuid"))
+  flatDataset$labPanelLP[is.na(flatDataset$labPanelLP)] <- 0
+  
+  cntlabPanel <- dcast(labPanel, PatientGuid ~ count, sum, value.var = "count")
+  names(cntlabPanel) <- c("PatientGuid", "cntlabPanel")
+  flatDataset <- merge(flatDataset, cntlabPanel, all.x = TRUE, by = c("PatientGuid"))
+  flatDataset$cntlabPanel[is.na(flatDataset$cntlabPanel)] <- 0
+  
+  ## lab observation types
+  
+  labPanelFilt <- subset(labPanel, select = c("PatientGuid", "count", "LabPanelGuid"))
+  
+  labObs <- merge(labObs, labPanelFilt, by = c("LabPanelGuid"))
+  
+  cntlabObs <- dcast(labObs, PatientGuid ~ count, sum, value.var = "count")
+  names(cntlabObs) <- c("PatientGuid", "cntlabObs")
+  flatDataset <- merge(flatDataset, cntlabObs, all.x = TRUE, by = c("PatientGuid"))
+  flatDataset$cntlabObs[is.na(flatDataset$cntlabObs)] <- 0
+  
+  labObs$IsAbnormalValue <- as.numeric(labObs$IsAbnormalValue)
+  cntLabObsAbnormal <- dcast(labObs, PatientGuid ~ count, sum, value.var = "IsAbnormalValue")
+  names(cntLabObsAbnormal) <- c("PatientGuid", "cntLabObsAbnormal")
+  flatDataset <- merge(flatDataset, cntLabObsAbnormal, all.x = TRUE, by = c("PatientGuid"))
+  flatDataset$cntLabObsAbnormal[is.na(flatDataset$cntLabObsAbnormal)] <- 0
+  
+  rm(labResult, LabCount)
+  gc()
+  
+   return(flatDataset) 
 }
 

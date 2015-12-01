@@ -24,6 +24,7 @@ library(GGally)
 library(ggplot2)
 library(reshape2)
 library(e1071)
+library(pROC)
 
 # Set up working directory 
 # # Katherine
@@ -49,8 +50,10 @@ dbListTables(con) # Display the list of all data tables
 
 # ================================================================================= #
 # Create dataset with Ndiagnosis, Nmedication, Nlab, AddTranscript
-train0 <- create_flattenedDataset(con, Ndiagnosis = 50, AddMedication = 1, 
-                                  Nlab = 0, AddTranscript = 1, nDrTypes = 2)
+train0 <- create_flattenedDataset(con, Ndiagnosis = 25, AddMedication = 1, 
+                                  AddLab = 1, AddTranscript = 1, nDrTypes = 2,
+                                  AddSmoke = 1)
+
 ## assign patient Guid to row name
 rownames(train0) <- train0[,1]
 
@@ -81,13 +84,20 @@ tapply(df.train, df.train$dmIndicator, summary)
 desc.stats <- describeBy(df.train, "dmIndicator",mat=TRUE)
 write.csv(desc.stats, "desc.stats.csv")
 
+image(as.matrix(df.train.even[df.train.even$dmIndicator==1, 
+                              c("ct.ccs.9899", "ct.ccs.53", "ct.ccs.205")][1:100,]),
+      useRaster=TRUE, xlim = range())
+
+table(df.train.even[, c("dmIndicator", "ct.ccs.9899", "ct.ccs.53", "ct.ccs.205")])
+
 ## Pairs plot to check if there's any variable that seems highly correlated
 ggpairs(df.train)        
         
 ## possibly plot things
-ggplot(df.train, aes(x=(ct.ccs.128>0)+(ct.ccs.127>0), colour=as.factor(dmIndicator))) + geom_density()
+ggplot(df.train, aes(x=as.numeric(Smoke_Code), colour=as.factor(dmIndicator))) + geom_density()
 ggplot(df.train, aes(x=(ct.ccs.9899>0)+(ct.ccs.53>0)+(BMI.med>30), colour=as.factor(dmIndicator))) + geom_density()
 
+ggplot(df.train, aes(x=Smoke_Code, colour=as.factor(dmIndicator))) + geom_point()
 
 ggplot(df.train, aes(x=SystolicBP.med, y=DiastolicBP.med, colour=as.factor(dmIndicator))) + geom_point()
 
@@ -97,16 +107,6 @@ ggplot(df.train, aes(x=SystolicBP.med, y=DiastolicBP.med, colour=as.factor(dmInd
 ## important:   make sure all predictors are numeric or factors
 #rf <- randomForest(x=train[obs.T,3:ncol(train)], y=train$dmIndicator[obs.T], 
 #                   ntree = 500, importance = TRUE)
-
-
-# CROSS VALIDATION ===========================================================================
-## Wrap all of this in cross-validation to produce AUC
-
-# ============ INSTALLATON =========================#
-install.packages("pROC")
-
-# ============= LIBRARIES =========================#
-library(pROC)
 
 #====================== CV for Random Forest=========================#
 # ASSUMPTION: COLUMN1: BINARY OUTCOME VARIABLE; REST: FEATURE MATRIX
@@ -155,12 +155,17 @@ err.vect.train = rep(NA, k)
 # 
 # print(paste("Avg. Test AUI: ", mean(err.vect.test)))
 # print(paste("Avg. Training AUI: ", mean(err.vect.train)))
+
 bestmtry = tuneRF(df.train.even[, -1], df.train.even[, 1], ntreeTry=500, 
                stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
 
 # Try tuning the M or the number of trees?
 fit.all = randomForest(x = df.train.even[, -1], y = as.factor(df.train.even[, 1]), 
                        ntree=ntrees,  mtry = 6,
+                       do.trace=TRUE, keep.forest=TRUE, importance=TRUE)
+## perhaps we don't need the ratios and the counts? does one perform better?
+fit.all = randomForest(x = df.train.even[, -c(1, 66:115)], y = as.factor(df.train.even[, 1]), 
+                       ntree=ntrees,  
                        do.trace=TRUE, keep.forest=TRUE, importance=TRUE)
 ## training ROC based on fitted values
 fitted = predict(fit.all, newdata = df.train.even[, -1], type = "prob")[, 2]
@@ -239,8 +244,9 @@ set.seed(45)
 tune.out = tune(svm, dmIndicator ~., data = df.train.even, 
                 kernel = "linear",
                 ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100)))
+
 svm.fit <- svm(dmIndicator ~., data = df.train.even, 
-    kernel = "linear", cost = 1, cross = 10)
+               kernel = "linear", cross = 10)
 
 
 
