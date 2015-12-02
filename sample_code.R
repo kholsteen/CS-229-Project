@@ -13,7 +13,7 @@
 rm(list = ls(all = TRUE)) 
 
 # # Install Packages
-# install.packages("RSQLITE")
+# install.packages("RSQLite")
 # install.packages("randomForest")
 # install.packages("plyr")
 # install.packages("psych")
@@ -26,6 +26,7 @@ rm(list = ls(all = TRUE))
 # install.packages("e1071")
 # install.packages("pROC")
 # install.packages("gbm")
+# install.packages("caret")
 
 # Load Libraries
 library(RSQLite)
@@ -42,6 +43,8 @@ library(reshape2)
 library(e1071)
 library(pROC)
 library(gbm)
+library(caret)
+library(caTools)
 
 # Set up working directory 
 # # Katherine
@@ -58,6 +61,11 @@ ccs_path = ("/E/holsteen/Kathy/CS229Project/")
 # # Haju
 # setwd("C:/Users/Haju Kim/Dropbox/Stanford/2015-2016/1Q/CS 229/Project")
 # source("C:/Users/Haju Kim/Dropbox/Stanford/2015-2016/1Q/CS 229/Project/sample_code_library.R")
+
+# # Haju 2
+# setwd("//afs/userhome/Desktop/CS 229/CS-229-Project-master/")
+# source(paste0(getwd(),"/sample_code_library.R"))
+# ccs_path = ("//afs/userhome/Desktop/CS 229/CS-229-Project-master/")
 
 # ================================================================================= #
 # Open connections
@@ -310,25 +318,15 @@ summary(model)
 # Optimal number of trees based upon OOB
 ntrees_optimal = gbm.perf(model, method = "OOB",  oobag.curve = TRUE)
 
-# # Look at the effects of each variable
-# ?plot.gbm
-# 
-# for (i in 1:length(model$var.names)) {
-#   plot(model, i.var = i
-#        , ntrees = gbm.perf(model, plot.it = false)
-#        , type = "response" # to get fitted probabilities
-#        )
-# }
-
 # Predictions (In-sample)
 fitted = predict(model, newdata = train, n.trees = ntrees_optimal, type="link")
 pROC::auc(dmIndicator, fitted)
-# Area under the curve: 0.9042
+# Area under the curve: 0.9052
 
 # Predictions (Out-of-sample)
 prediction = predict(model, newdata = df.test[,-1], n.trees = ntrees_optimal, type="link")
 pROC::auc(df.test[,1], prediction)
-# Area under the curve: 0.8383
+# Area under the curve: 0.843
 
 
 # Confusion matrix
@@ -338,8 +336,67 @@ confusion = function(prediction, actual){
   list(table = tbl, misclass.prob = mis)
 }
 
-confusion(prediction, df.test[,1])
+
 confusion(fitted, dmIndicator)
+# $misclass.prob
+# [1] 0.1799148
+
+
+confusion(prediction, df.test[,1])
+# $misclass.prob
+# [1] 0.2649779
+
+# varImp_gbm = data.frame(summary(model))
+# barplot(varImp_gbm$var, varImp_gbm$rel.inf)
+# write.csv(varImp_gbm, "varImp_gbm.csv")
+
+
+####### USING A PACKAGE CARET (Creates a more visually pleasing variable importance plot)###############
+train = df.train.even
+train$dmIndicator = make.names(train$dmIndicator)
+
+# Tune parameters (#10-fold cv)
+fitControl = trainControl(
+  method = "repeatedcv",
+  number = 10,
+  repeats = 5,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary
+)
+
+
+# Specify candidate models (Tune parameters)
+gbmGrid =  expand.grid(interaction.depth = c(1, 5, 10, 15),
+                        n.trees = (1:30)*50,
+                        shrinkage = 0.01,
+                        n.minobsinnode = 10)
+
+nrow(gbmGrid)
+
+set.seed(1105)
+gbm_model = train(dmIndicator ~ ., data = train,
+                 method = "gbm",
+                 trControl = fitControl,
+                 verbose = FALSE,
+                 tuneGrid = gbmGrid,
+                 metric = "ROC")
+
+# Generate a plot that summarizes the result for using different parameters
+ggplot(gbm_model, metric='ROC')
+
+# Generate a variable importance plot (Top 20)
+gbmImp = varImp(gbm_model, scale = TRUE)
+ggplot(gbmImp, top = 20) + ggtitle("Variable Importance of Top 20")
+
+gbmVarImp = data.frame(gbmImp$importance) 
+gbmVarImp = gbmVarImp[order(-gbmVarImp$Overall), ,drop = FALSE]
+write.csv(gbmVarImp, "gbmVarImp.csv")
+
+
+# Test set: Evaluate the model on the test set
+prediction = predict(gbm_model, newdata = df.test, type = "prob")
+colAUC(prediction, df.test$dmIndicator, plotROC = TRUE)
+
 
 ## Error analysis
 ## Confusion matrix
@@ -347,8 +404,5 @@ confusion(fitted, dmIndicator)
 
 #myPred <- data.frame(test$PatientGuid, rf_result)
 #write.table(myPred[order(myPred$test.PatientGuid),], "sample.csv", sep=',', row.names=FALSE, quote=TRUE, col.names=FALSE)
-
-
-
 
 
