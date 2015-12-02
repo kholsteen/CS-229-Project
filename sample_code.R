@@ -67,9 +67,15 @@ dbListTables(con) # Display the list of all data tables
 
 # ================================================================================= #
 # Create dataset with Ndiagnosis, Nmedication, Nlab, AddTranscript
-train0 <- create_flattenedDataset(con, Ndiagnosis = 25, AddMedication = 1, 
-                                  AddLab = 1, AddTranscript = 1, nDrTypes = 2,
+train0 <- create_flattenedDataset(con, Ndiagnosis = 50, AddMedication = 1, 
+                                  AddLab = 1, AddTranscript = 1, nDrTypes = 5,
                                   AddSmoke = 1)
+saveRDS(train0, "train0.rds")
+
+# ================================================================================= #
+# Read in dataset 
+
+train0 <- readRDS("train0.rds")
 
 ## assign patient Guid to row name
 rownames(train0) <- train0[,1]
@@ -178,7 +184,7 @@ bestmtry = tuneRF(df.train.even[, -1], df.train.even[, 1], ntreeTry=500,
 
 # Try tuning the M or the number of trees?
 fit.all = randomForest(x = df.train.even[, -1], y = as.factor(df.train.even[, 1]), 
-                       ntree=ntrees,  mtry = 6,
+                       ntree=ntrees,  
                        do.trace=TRUE, keep.forest=TRUE, importance=TRUE)
 ## perhaps we don't need the ratios and the counts? does one perform better?
 fit.all = randomForest(x = df.train.even[, -c(1, 66:115)], y = as.factor(df.train.even[, 1]), 
@@ -251,19 +257,23 @@ legend("bottomright", legend = c("Training Error", "Test (CV) Error"),
 
 
 
-## Boosting???
-
-## Naive Bayes??  average preds from multiple methods?
 
 ##=================== SVM =============================
 
 set.seed(45)
+
+## 1.  Linear Kernel
 tune.out = tune(svm, dmIndicator ~., data = df.train.even, 
                 kernel = "linear",
                 ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100)))
 
 svm.fit <- svm(dmIndicator ~., data = df.train.even, 
                kernel = "linear", cross = 10)
+
+## Polynomial degree (tune degree)
+
+## 
+
 
 
 ## ==========================================GBM==================================
