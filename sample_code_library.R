@@ -113,17 +113,18 @@ addTranscriptVariables <- function(con,  flatDataset, nDrTypes) {
   ct.Transcripts <- as.vector(by(transcript, transcript$PatientGuid, nrow))
     
   ## calculate ratios between counts of physician visits by type and overall # transcripts
-  drType.Transcripts.Ratio <- drTypeCols/ct.Transcripts
-  colnames(drType.Transcripts.Ratio) <- paste0("rto.", gsub(" ", "", freqTabledrType$drType[1:nDrTypes]))
+  #drType.Transcripts.Ratio <- drTypeCols/ct.Transcripts
+  #colnames(drType.Transcripts.Ratio) <- paste0("rto.", gsub(" ", "", freqTabledrType$drType[1:nDrTypes]))
 
-  AllCols = as.data.frame(cbind(medCols, drTypeCols, ct.Transcripts=ct.Transcripts, 
-                                drType.Transcripts.Ratio))
+  AllCols = as.data.frame(cbind(medCols, drTypeCols, ct.Transcripts=ct.Transcripts))
+                                #, 
+                                #drType.Transcripts.Ratio))
   guids <- unique(transcript$PatientGuid)
   AllCols$PatientGuid <- guids[order(guids)]
   flatDataset <- merge(flatDataset, AllCols, by="PatientGuid", all.x=TRUE)
   
   ## Replace NA with zeros
-  for (colname in c(colnames(drTypeCols), "ct.Transcripts", colnames(drType.Transcripts.Ratio))) {
+  for (colname in c(colnames(drTypeCols), "ct.Transcripts")) {
     flatDataset[is.na(flatDataset[, colname]), colname] <- 0
   }
   return(flatDataset)
@@ -228,19 +229,18 @@ addDiagnosisVariables <- function(con,  flatDataset, Ndiagnosis) {
   
   flatDataset$ct.DGNs <- rowSums(flatDataset[, colnames(ccs.ct.Cols)[-ncol(ccs.ct.Cols)]])
   flatDataset$ct.ccs.Distinct <- rowSums(flatDataset[, colnames(ccs.ct.Cols)[-ncol(ccs.ct.Cols)]]>0)
-  
-  ## calculate ratio s of ccs counts to total # transcripts (if total # transcripts is present)
-  if ("ct.Transcripts" %in% colnames(flatDataset)) {     
-    ## initialize
-    flatDataset[, paste0("rto.ccs.", ccs.freqTable$id[1:Ndiagnosis])] <- 0
-    flatDataset$rto.DGNs <- 0
-    ## calculate ratios for subjects with nonzero # transcripts
-    flatDataset[flatDataset$ct.Transcripts>0, paste0("rto.ccs.", ccs.freqTable$id[1:Ndiagnosis])] <- 
-      flatDataset[flatDataset$ct.Transcripts>0, colnames(ccs.ct.Cols)[-ncol(ccs.ct.Cols)]]/flatDataset$ct.Transcripts[flatDataset$ct.Transcripts>0]
-    flatDataset$rto.DGNs[flatDataset$ct.Transcripts>0] <- 
-      flatDataset$ct.DGNs[flatDataset$ct.Transcripts>0]/flatDataset$ct.Transcripts[flatDataset$ct.Transcripts>0]
-    } 
-  ## is it possible to have positive dgn and zero transcripts?
+#   
+#   ## calculate ratio s of ccs counts to total # transcripts (if total # transcripts is present)
+#   if ("ct.Transcripts" %in% colnames(flatDataset)) {     
+#     ## initialize
+#     flatDataset[, paste0("rto.ccs.", ccs.freqTable$id[1:Ndiagnosis])] <- 0
+#     flatDataset$rto.DGNs <- 0
+#     ## calculate ratios for subjects with nonzero # transcripts
+#     flatDataset[flatDataset$ct.Transcripts>0, paste0("rto.ccs.", ccs.freqTable$id[1:Ndiagnosis])] <- 
+#       flatDataset[flatDataset$ct.Transcripts>0, colnames(ccs.ct.Cols)[-ncol(ccs.ct.Cols)]]/flatDataset$ct.Transcripts[flatDataset$ct.Transcripts>0]
+#     flatDataset$rto.DGNs[flatDataset$ct.Transcripts>0] <- 
+#       flatDataset$ct.DGNs[flatDataset$ct.Transcripts>0]/flatDataset$ct.Transcripts[flatDataset$ct.Transcripts>0]
+#     } 
   return(flatDataset) 
 }
 
