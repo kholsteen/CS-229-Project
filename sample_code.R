@@ -377,7 +377,7 @@ set.seed(1105)
 gbm_model = train(dmIndicator ~ ., data = train,
                  method = "gbm",
                  trControl = fitControl,
-                 verbose = FALSE,
+                 verbose = TRUE,
                  tuneGrid = gbmGrid,
                  metric = "ROC")
 
