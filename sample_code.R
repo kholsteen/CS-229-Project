@@ -1,3 +1,4 @@
+# Updated the GBM codes and the required libraries
 # sample_code.R
 # Sample code for the Practice Fusion Diabetes Classification Competition.
 # This codes provides an example of how to flatten the data set features for
@@ -10,6 +11,21 @@
 # ================================================================================= #
 # Clear work space
 rm(list = ls(all = TRUE)) 
+
+# # Install Packages
+# install.packages("RSQLITE")
+# install.packages("randomForest")
+# install.packages("plyr")
+# install.packages("psych")
+# install.packages("ROCR")
+# install.packages("doBy")
+# install.packages("cvTools")
+# install.packages("GGally")
+# install.packages("ggplot2")
+# install.packages("reshape2")
+# install.packages("e1071")
+# install.packages("pROC")
+# install.packages("gbm")
 
 # Load Libraries
 library(RSQLite)
@@ -25,6 +41,7 @@ library(ggplot2)
 library(reshape2)
 library(e1071)
 library(pROC)
+library(gbm)
 
 # Set up working directory 
 # # Katherine
@@ -249,6 +266,70 @@ svm.fit <- svm(dmIndicator ~., data = df.train.even,
                kernel = "linear", cross = 10)
 
 
+## ==========================================GBM==================================
+# Preprocess the data to fit into the GBM model
+train = df.train.even
+dmIndicator = train$dmIndicator
+train = subset(train, select = c(-dmIndicator))
+
+#parameters
+GBM_ITERATIONS = 2500
+GBM_LEARNING_RATE = 0.01
+GBM_DEPTH = 10
+GBM_MINOBS = 10
+
+# Construct the Model 
+set.seed(123)
+
+model = gbm.fit(x=train
+                , y = as.vector(dmIndicator)
+                , distribution = "bernoulli"
+                , n.trees = GBM_ITERATIONS
+                , shrinkage = GBM_LEARNING_RATE # Set it to a low value for computation
+                , interaction.depth = GBM_DEPTH # Not too large to prevent overfitting
+                , n.minobsinnode = GBM_MINOBS # Not too small to prevent overfitting
+                , nTrain = round(nrow(train), 0.8)
+                , verbose = TRUE
+)
+
+# Relative influence among the variables can be used in varaible selection
+summary(model)
+# If one variable is more important than all of the rest, this may be a evidence of overfitting
+
+
+# Optimal number of trees based upon OOB
+ntrees_optimal = gbm.perf(model, method = "OOB",  oobag.curve = TRUE)
+
+# # Look at the effects of each variable
+# ?plot.gbm
+# 
+# for (i in 1:length(model$var.names)) {
+#   plot(model, i.var = i
+#        , ntrees = gbm.perf(model, plot.it = false)
+#        , type = "response" # to get fitted probabilities
+#        )
+# }
+
+# Predictions (In-sample)
+fitted = predict(model, newdata = train, n.trees = ntrees_optimal, type="link")
+pROC::auc(dmIndicator, fitted)
+# Area under the curve: 0.9042
+
+# Predictions (Out-of-sample)
+prediction = predict(model, newdata = df.test[,-1], n.trees = ntrees_optimal, type="link")
+pROC::auc(df.test[,1], prediction)
+# Area under the curve: 0.8383
+
+
+# Confusion matrix
+confusion = function(prediction, actual){
+  tbl = table(prediction > 0, actual)
+  mis = 1 - sum(diag(tbl))/sum(tbl)
+  list(table = tbl, misclass.prob = mis)
+}
+
+confusion(prediction, df.test[,1])
+confusion(fitted, dmIndicator)
 
 ## Error analysis
 ## Confusion matrix
