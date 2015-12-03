@@ -124,13 +124,31 @@ table(df.train.even[, c("dmIndicator", "ct.ccs.9899", "ct.ccs.53", "ct.ccs.205")
 ## Pairs plot to check if there's any variable that seems highly correlated
 ggpairs(df.train)        
         
-## possibly plot things
-ggplot(df.train, aes(x=as.numeric(Smoke_Code), colour=as.factor(dmIndicator))) + geom_density()
-ggplot(df.train, aes(x=(ct.ccs.9899>0)+(ct.ccs.53>0)+(BMI.med>30), colour=as.factor(dmIndicator))) + geom_density()
+## ========================================================================================
+## Create overlaid density plots for key predictor variables
 
-ggplot(df.train, aes(x=Smoke_Code, colour=as.factor(dmIndicator))) + geom_point()
-
-ggplot(df.train, aes(x=SystolicBP.med, y=DiastolicBP.med, colour=as.factor(dmIndicator))) + geom_point()
+df.train$Age <- 2009-df.train$YearOfBirth
+df.train$dmIndicator <- factor(df.train$dmIndicator, levels = c("1", "0"))
+vars.to.plot <- c("Age", "BMI.med", "ct.ccs.9899","Weight.med",  "ct.Transcripts")
+vars.labels <- c("Age", "BMI", "Hypertension Diagnosis Count", "Weight (lbs)", 
+                 "Transcript Count")
+max.x <- c(max(df.train[,"Age"]), max(df.train[,"BMI.med"]), 25, max(df.train[,"Weight.med"]),
+            100))
+for (i in 1:length(vars.to.plot)) {
+  i = length(vars.to.plot)
+  print(ggplot(df.train, aes_string(x=vars.to.plot[i])) + xlab(vars.labels[i]) +
+    geom_density(aes(group=dmIndicator, colour = dmIndicator, fill=dmIndicator), alpha = 0.3) +
+    theme(legend.title=element_blank(), 
+          legend.text = element_text(size = 16, face = "bold"),
+          axis.text.x = element_text(size = 16, face = "bold"),
+          axis.title.x = element_text(size = 16, face = "bold"),
+          axis.ticks = element_blank(), axis.title.y = element_blank(),
+          axis.text.y = element_blank())  +
+      scale_x_continuous(limits = c(0,max.x[i])) +
+    scale_colour_discrete(labels=c("Diabetes +", "Diabetes -")) + 
+    scale_fill_discrete(labels=c("Diabetes +", "Diabetes -") ) 
+    )
+}
 
 # ================================================================================= #
 
