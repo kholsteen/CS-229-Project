@@ -84,7 +84,6 @@ saveRDS(train0, "train0.rds")
 # ================================================================================= #
 # Read in dataset 
 train0 <- readRDS("train0.rds")
-
 ## assign patient Guid to row name
 rownames(train0) <- train0[,1]
 # Split the data into training and test sets
@@ -359,12 +358,34 @@ confusion(prediction, df.test[,1])
 ### USE CARET TO TUNE AND GENERATE MODELS ###########################
 ####===================================================================
 
+train = df.train.even
+train$dmIndicator = make.names(train$dmIndicator)
+
 ### A) FULL FEATURE SET ===============================================
+########## RANDOM FOREST ==============================================
+
+# Tune parameters (#10-fold cv)
+rfControl = trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary
+)
+# Specify candidate models (Tune parameters)
+rfGrid =  expand.grid(mtry = c(4, 6, 8, 10, 12, 14))
+nrow(rfGrid)
+set.seed(1995)
+rf_model = train(dmIndicator ~ ., data = train,
+                 method = "rf",
+                 ntree = 500,
+                 trControl = rfControl,
+                 do.trace = TRUE,
+                 tuneGrid = rfGrid,
+                 metric = "ROC")
+saveRDS(rf_model, "rf_model_full.RDS")
 
 ########## GBM ========================================================
 
-train = df.train.even
-train$dmIndicator = make.names(train$dmIndicator)
 # Tune parameters (#10-fold cv)
 fitControl = trainControl(
   method = "repeatedcv",
@@ -420,23 +441,28 @@ svmPolyTune <- train(dmIndicator ~ ., data = train,
 saveRDS(svmPolyTune, "svmPolyTune.rds")
 
 #########===================================================================
+## GET VARIABLE IMPORTANCE 
+#########===================================================================
 
-### TO ADD:  B) REDUCED FEATURE SET for each model
-
-###==========================================================================
-##### SUMMARIZE MODELS ###############################
-###==========================================================================
-
+rf_model <- readRDS("rf_model_full.RDS")
 gbm_model <- readRDS("gbm_model_full.RDS")
 svmLinear <- readRDS("svmLinearTune.rds")
 svmPoly <- readRDS("svmPolyTune.rds")
 
 # Generate a plot that summarizes the result for using different parameters
+ggplot(rf_model, metric='ROC')
 ggplot(gbm_model, metric='ROC')
 ggplot(svmLinear, metric = "ROC")
 ggplot(svmPoly, metric = "ROC")
 
 ## Plot and save variable importance
+
+rfImp = varImp(rf_model, scale = TRUE)
+ggplot(rfImp, top = 20) + ggtitle("Variable Importance:  Random Forest")
+rfVarImp = data.frame(rfImp$importance) 
+rfVarImp = rfVarImp[order(-rfVarImp$Overall), ,drop = FALSE]
+write.csv(rfVarImp, "rfVarImp.csv")
+
 gbmImp = varImp(gbm_model, scale = TRUE)
 ggplot(gbmImp, top = 20) + ggtitle("Variable Importance:  GBM")
 gbmVarImp = data.frame(gbmImp$importance) 
@@ -455,7 +481,65 @@ svmPolyImp = data.frame(svmPolyImp$importance)
 svmPolyImp = svmPolyImp[order(-svmPolyImp[,1]),]
 write.csv(svmPolyImp, "svmPolyImp.csv")
 
+#######==================================================
+### B) REDUCED FEATURE SET for each model based on variable importance
+
+# Random Forest
+set.seed(1776)
+rf_model15 = train(dmIndicator ~ ., 
+                 data = train[, c("dmIndicator", rownames(rfVarImp)[1:15])],
+                 method = "rf",
+                 ntree = 500,
+                 trControl = rfControl,
+                 do.trace = TRUE,
+                 tuneGrid = rfGrid,
+                 metric = "ROC")
+saveRDS(rf_model15, "rf_model15.RDS")
+
+# GBM
+set.seed(3545)
+gbm_model20 = train(dmIndicator ~ ., 
+                    data = train[, c("dmIndicator", rownames(gbmVarImp)[1:20])],
+                    method = "gbm",
+                    trControl = fitControl,
+                    verbose = TRUE,
+                    tuneGrid = gbmGrid,
+                    metric = "ROC")
+saveRDS(gbm_model20, "gbm_model20.rds")
+
+# Linear Kernel
+set.seed(987)
+svmLinearTune11 <- train(dmIndicator ~ ., 
+                       data = train[, c("dmIndicator", 
+                                        rownames(svmLinearImp)[1:11])],
+                       method = "svmLinear",
+                       verbose = TRUE,
+                       tuneGrid = svmLinearGrid,
+                       metric = "ROC",
+                       trControl = svm.fitControl)
+saveRDS(svmLinearTune11, "svmLinearTune11.rds")
+
+##  Polynomial Kernel
+## Can't get this code to complete .... 
+# set.seed(725)
+# svmPolyTune11 <- train(dmIndicator ~ ., 
+#                        data = train[, c("dmIndicator", 
+#                                         rownames(svmPolyImp)[1:11])], 
+#                      method = "svmPoly",
+#                      verbose = TRUE,
+#                      tuneGrid = svmPolyGrid,
+#                      metric = "ROC",
+#                      trControl = svm.fitControl)
+# saveRDS(svmPolyTune11, "svmPolyTune11.rds")
+
+###==========================================================================
+##### EVALUATE MODELS ###############################
+###==========================================================================
+
+## A)  Full Feature Set =====================================================
+
 # Test set: Evaluate the model on the test set
+pred.rf = predict(rf_model, newdata = df.test, type = "prob")[,2]
 pred.svmLinear = predict(svmLinear, newdata = df.test, type = "prob")[,2]
 pred.svmPoly = predict(svmPoly, newdata = df.test, type = "prob")[,2]
 pred.gbm = predict(gbm_model, newdata = df.test, type = "prob")[,2]
@@ -470,6 +554,10 @@ plot.roc(roc.test.svmPoly, add = TRUE, lty = 2)
 roc.test.gbm <- roc(df.test[, 1], pred.gbm)
 plot.roc(roc.test.gbm, add = TRUE, lty = 3)
 #Area under the curve: 0.8495
+roc.test.rf <- roc(df.test[, 1], pred.rf)
+plot.roc(roc.test.rf, add = TRUE, lty = 4)
+# Area under the curve: 0.8359
+## legend
 
 ## Plot PRC (output AUC)
 (pr.svmLinear<-pr.curve(scores.class0 = pred.svmLinear[df.test$dmIndicator == 0], 
@@ -490,6 +578,69 @@ plot(pr.svmPoly, add = TRUE, lty = 3, col = "red")
 plot(pr.gbm, add = TRUE, col = "blue")
 #Area under curve (Integral):
 #  0.643346 
+pr.rf<-pr.curve(scores.class0 = pred.rf[df.test$dmIndicator == 0], 
+                 scores.class1 = pred.rf[df.test$dmIndicator == 1], 
+                 curve = TRUE)
+plot(pr.rf, add = TRUE, col = "green")
+#   Area under curve (Integral):
+# 0.6487595
+
+## legend
+
 ##===========================================================
+
+## B)  Reduced Feature Sets =================================
+
+rf_model15 <- readRDS("rf_model15.RDS")
+svmLinear11 <- readRDS("svmLinearTune11.rds")
+gbm_model20 <- readRDS("gbm_model20.rds")
+
+# Test set: Evaluate the model on the test set
+pred.rfR = predict(rf_model15, newdata = df.test, type = "prob")[,2]
+pred.svmLinearR = predict(svmLinear11, newdata = df.test, type = "prob")[,2]
+#pred.svmPoly = predict(svmPoly, newdata = df.test, type = "prob")[,2]
+pred.gbmR = predict(gbm_model20, newdata = df.test, type = "prob")[,2]
+
+## Plot ROC (output AUC)
+roc.test.svmLinearR <- roc(df.test[, 1], pred.svmLinearR)
+plot.roc(roc.test.svmLinearR, main = "ROC:  Reduced Feature Set", lty=1)
+# Area under the curve: 0.7967
+#roc.test.svmPoly <- roc(df.test[, 1], pred.svmPoly)
+#plot.roc(roc.test.svmPoly, add = TRUE, lty = 2)
+# Area under the curve: 0.8187
+roc.test.gbmR <- roc(df.test[, 1], pred.gbmR)
+plot.roc(roc.test.gbmR, add = TRUE, lty = 3)
+#Area under the curve: 0.8366
+roc.test.rfR <- roc(df.test[, 1], pred.rfR)
+plot.roc(roc.test.rfR, add = TRUE, lty = 4)
+# Area under the curve:  0.8189
+## legend
+
+## Plot PRC (output AUC)
+## PRC AUCs appear to be slightly higher for reduced than for full feature sets?
+
+(pr.svmLinearR<-pr.curve(scores.class0 = pred.svmLinearR[df.test$dmIndicator == 0], 
+                        scores.class1 = pred.svmLinearR[df.test$dmIndicator == 1], 
+                        curve = TRUE))
+plot(pr.svmLinearR, auc.main = FALSE, main = "PR Curve:  Reduced Feature Set", lty = 2, col = "black")
+#Area under curve (Integral):
+#  0.6665106 
+#(pr.svmPoly<-pr.curve(scores.class0 = pred.svmPoly[df.test$dmIndicator == 0], 
+#                      scores.class1 = pred.svmPoly[df.test$dmIndicator == 1], 
+#                      curve = TRUE))
+#plot(pr.svmPoly, add = TRUE, lty = 3, col = "red")
+
+(pr.gbmR<-pr.curve(scores.class0 = pred.gbmR[df.test$dmIndicator == 0], 
+                  scores.class1 = pred.gbmR[df.test$dmIndicator == 1], 
+                  curve = TRUE))
+plot(pr.gbmR, add = TRUE, col = "blue")
+#    Area under curve (Integral):
+#  0.6488368 
+pr.rfR<-pr.curve(scores.class0 = pred.rfR[df.test$dmIndicator == 0], 
+                scores.class1 = pred.rfR[df.test$dmIndicator == 1], 
+                curve = TRUE)
+plot(pr.rfR, add = TRUE, col = "green")
+#   Area under curve (Integral):
+#   0.6560269 
 
 
