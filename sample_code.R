@@ -45,6 +45,7 @@ library(pROC)
 library(gbm)
 library(caret)
 library(caTools)
+library(PRROC)
 
 # Set up working directory 
 # # Katherine
@@ -82,13 +83,10 @@ saveRDS(train0, "train0.rds")
 
 # ================================================================================= #
 # Read in dataset 
-
 train0 <- readRDS("train0.rds")
 
 ## assign patient Guid to row name
 rownames(train0) <- train0[,1]
-
-# ================================================================================= #
 # Split the data into training and test sets
 set.seed(123)
 train.ind = sample(1:nrow(train0), 0.75*nrow(train0))
@@ -99,6 +97,14 @@ df.test = train0[-train.ind,2:ncol(train0)]
 df.train.even = rbind(df.train[df.train$dmIndicator == 1,], 
                       df.train[sample(x=which(df.train$dmIndicator == 0),
                                       size = sum(df.train$dmIndicator == 1)),])
+
+colnames.top20 <- c("YearOfBirth", "BMI.med", "SystolicBP.med",
+                    "DiastolicBP.med", "Weight.med", "ct.InternalMedicine",
+                    "ct.Transcripts", "ct.ccs.9899", "ct.ccs.98",
+                    "ct.ccs.53", "ct.ccs.651", "ct.ccs.84", "ct.ccs.158",
+                    "ct.ccs.49", "ct.DGNs", "ct.ccs.Distinct",
+                    "cntMedication", "cntMedLis", "ct.Chol.Med",
+                    "labPanelCMP")
 
 # Descriptive Statistics
 
@@ -133,21 +139,21 @@ vars.to.plot <- c("Age", "BMI.med", "ct.ccs.9899","Weight.med",  "ct.Transcripts
 vars.labels <- c("Age", "BMI", "Hypertension Diagnosis Count", "Weight (lbs)", 
                  "Transcript Count")
 max.x <- c(max(df.train[,"Age"]), max(df.train[,"BMI.med"]), 25, max(df.train[,"Weight.med"]),
-            100))
+           100))
 for (i in 1:length(vars.to.plot)) {
   i = length(vars.to.plot)
   print(ggplot(df.train, aes_string(x=vars.to.plot[i])) + xlab(vars.labels[i]) +
-    geom_density(aes(group=dmIndicator, colour = dmIndicator, fill=dmIndicator), alpha = 0.3) +
-    theme(legend.title=element_blank(), 
-          legend.text = element_text(size = 16, face = "bold"),
-          axis.text.x = element_text(size = 16, face = "bold"),
-          axis.title.x = element_text(size = 16, face = "bold"),
-          axis.ticks = element_blank(), axis.title.y = element_blank(),
-          axis.text.y = element_blank())  +
-      scale_x_continuous(limits = c(0,max.x[i])) +
-    scale_colour_discrete(labels=c("Diabetes +", "Diabetes -")) + 
-    scale_fill_discrete(labels=c("Diabetes +", "Diabetes -") ) 
-    )
+          geom_density(aes(group=dmIndicator, colour = dmIndicator, fill=dmIndicator), alpha = 0.3) +
+          theme(legend.title=element_blank(), 
+                legend.text = element_text(size = 16, face = "bold"),
+                axis.text.x = element_text(size = 16, face = "bold"),
+                axis.title.x = element_text(size = 16, face = "bold"),
+                axis.ticks = element_blank(), axis.title.y = element_blank(),
+                axis.text.y = element_blank())  +
+          scale_x_continuous(limits = c(0,max.x[i])) +
+          scale_colour_discrete(labels=c("Diabetes +", "Diabetes -")) + 
+          scale_fill_discrete(labels=c("Diabetes +", "Diabetes -") ) 
+  )
 }
 
 # ================================================================================= #
@@ -236,8 +242,9 @@ text(x=c(.65, .4), y=c(.9, .65), label=c(paste0('Training AUC = ', round(auc.tra
 # variable importance plot
 varImpPlot(fit.all, n.var=15, type=1, main = "Variable Importance in Random Forest")
 
-
-## test the different sample sizes to create error vs. sample size plot
+####===============================================================================
+## Test the different sample sizes to create error vs. sample size plot
+####===============================================================================
 
 obs <- seq(from = 400, to = 2800, by = 400)
 method <- "svm"
@@ -280,26 +287,6 @@ plot(obs, error.obs[1,], pch = 1, ylim = range(0, .4),
 points(obs, error.obs[2,], pch = 2, col = "red")
 legend("bottomright", legend = c("Training Error", "Test (CV) Error"), 
        pch = c(1,2), col = c("black", "red"))
-
-
-
-
-##=================== SVM =============================
-
-set.seed(45)
-
-## 1.  Linear Kernel
-tune.out = tune(svm, dmIndicator ~., data = df.train.even, 
-                kernel = "linear",
-                ranges = list(cost = c(0.001, 0.01, 0.1, 1, 5, 10, 100)))
-
-svm.fit <- svm(dmIndicator ~., data = df.train.even, 
-               kernel = "linear", cross = 10)
-
-## Polynomial degree (tune degree)
-
-## 
-
 
 
 ## ==========================================GBM==================================
@@ -368,11 +355,16 @@ confusion(prediction, df.test[,1])
 # barplot(varImp_gbm$var, varImp_gbm$rel.inf)
 # write.csv(varImp_gbm, "varImp_gbm.csv")
 
+####===================================================================
+### USE CARET TO TUNE AND GENERATE MODELS ###########################
+####===================================================================
 
-####### USING A PACKAGE CARET (Creates a more visually pleasing variable importance plot)###############
+### A) FULL FEATURE SET ===============================================
+
+########## GBM ========================================================
+
 train = df.train.even
 train$dmIndicator = make.names(train$dmIndicator)
-
 # Tune parameters (#10-fold cv)
 fitControl = trainControl(
   method = "repeatedcv",
@@ -381,16 +373,12 @@ fitControl = trainControl(
   classProbs = TRUE,
   summaryFunction = twoClassSummary
 )
-
-
 # Specify candidate models (Tune parameters)
 gbmGrid =  expand.grid(interaction.depth = c(1, 5, 10, 15),
                         n.trees = (1:30)*50,
                         shrinkage = 0.01,
                         n.minobsinnode = 10)
-
 nrow(gbmGrid)
-
 set.seed(1105)
 gbm_model = train(dmIndicator ~ ., data = train,
                  method = "gbm",
@@ -398,29 +386,110 @@ gbm_model = train(dmIndicator ~ ., data = train,
                  verbose = TRUE,
                  tuneGrid = gbmGrid,
                  metric = "ROC")
+saveRDS(gbm_model, "gbm_model_full.RDS")
+
+######## SVM =====================================================
+
+## 1.  Linear Kernel
+svm.fitControl = trainControl(
+  method = "cv",
+  number = 10,
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary
+)
+svmLinearGrid =  expand.grid(C = c(0.001, 0.01, 0.1, 1, 5, 10, 100))
+svmLinearTune <- train(dmIndicator ~ ., 
+                       data = train,
+                       method = "svmLinear",
+                       verbose = TRUE,
+                       tuneGrid = svmLinearGrid,
+                       metric = "ROC",
+                       trControl = svm.fitControl)
+saveRDS(svmLinearTune, "svmLinearTune.rds")
+
+## 2.  Polynomial Kernel
+svmPolyGrid =  expand.grid( degree = c(2, 3), 
+                            scale = c(0.001, 0.01, 0.1, 1, 10, 100), 
+                            C = c(0.001, 0.01, 0.1, 1, 10, 100))
+svmPolyTune <- train(dmIndicator ~ ., data = train, 
+                     method = "svmPoly",
+                     verbose = TRUE,
+                     tuneGrid = svmPolyGrid,
+                     metric = "ROC",
+                     trControl = svm.fitControl)
+saveRDS(svmPolyTune, "svmPolyTune.rds")
+
+#########===================================================================
+
+### TO ADD:  B) REDUCED FEATURE SET for each model
+
+###==========================================================================
+##### SUMMARIZE MODELS ###############################
+###==========================================================================
+
+gbm_model <- readRDS("gbm_model_full.RDS")
+svmLinear <- readRDS("svmLinearTune.rds")
+svmPoly <- readRDS("svmPolyTune.rds")
 
 # Generate a plot that summarizes the result for using different parameters
 ggplot(gbm_model, metric='ROC')
+ggplot(svmLinear, metric = "ROC")
+ggplot(svmPoly, metric = "ROC")
 
-# Generate a variable importance plot (Top 20)
+## Plot and save variable importance
 gbmImp = varImp(gbm_model, scale = TRUE)
-ggplot(gbmImp, top = 20) + ggtitle("Variable Importance of Top 20")
-
+ggplot(gbmImp, top = 20) + ggtitle("Variable Importance:  GBM")
 gbmVarImp = data.frame(gbmImp$importance) 
 gbmVarImp = gbmVarImp[order(-gbmVarImp$Overall), ,drop = FALSE]
 write.csv(gbmVarImp, "gbmVarImp.csv")
 
+svmLinearImp = varImp(svmLinear, scale = TRUE)
+ggplot(svmLinearImp, top = 20) + ggtitle("Variable Importance:  Linear SVM")
+svmLinearImp = data.frame(svmLinearImp$importance)
+svmLinearImp = svmLinearImp[order(-svmLinearImp[,1]),]
+write.csv(svmLinearImp, "svmLinearImp.csv")
+
+svmPolyImp = varImp(svmPoly, scale = TRUE)
+ggplot(svmPolyImp, top = 20) + ggtitle("Variable Importance:  Polynomial SVM")
+svmPolyImp = data.frame(svmPolyImp$importance)
+svmPolyImp = svmPolyImp[order(-svmPolyImp[,1]),]
+write.csv(svmPolyImp, "svmPolyImp.csv")
 
 # Test set: Evaluate the model on the test set
-prediction = predict(gbm_model, newdata = df.test, type = "prob")
-colAUC(prediction, df.test$dmIndicator, plotROC = TRUE)
+pred.svmLinear = predict(svmLinear, newdata = df.test, type = "prob")[,2]
+pred.svmPoly = predict(svmPoly, newdata = df.test, type = "prob")[,2]
+pred.gbm = predict(gbm_model, newdata = df.test, type = "prob")[,2]
 
+## Plot ROC (output AUC)
+roc.test.svmLinear <- roc(df.test[, 1], pred.svmLinear)
+plot.roc(roc.test.svmLinear, main = "ROC:  Full Feature Set", lty=1)
+# Area under the curve: 0.8113
+roc.test.svmPoly <- roc(df.test[, 1], pred.svmPoly)
+plot.roc(roc.test.svmPoly, add = TRUE, lty = 2)
+# Area under the curve: 0.8187
+roc.test.gbm <- roc(df.test[, 1], pred.gbm)
+plot.roc(roc.test.gbm, add = TRUE, lty = 3)
+#Area under the curve: 0.8495
 
-## Error analysis
-## Confusion matrix
-## What kind of examples is it getting wrong?
-
-#myPred <- data.frame(test$PatientGuid, rf_result)
-#write.table(myPred[order(myPred$test.PatientGuid),], "sample.csv", sep=',', row.names=FALSE, quote=TRUE, col.names=FALSE)
+## Plot PRC (output AUC)
+(pr.svmLinear<-pr.curve(scores.class0 = pred.svmLinear[df.test$dmIndicator == 0], 
+             scores.class1 = pred.svmLinear[df.test$dmIndicator == 1], 
+             curve = TRUE))
+plot(pr.svmLinear, auc.main = FALSE, main = "PR Curve:  Full Feature Set", lty = 2, col = "black")
+#Area under curve (Integral):
+#  0.6597257 
+(pr.svmPoly<-pr.curve(scores.class0 = pred.svmPoly[df.test$dmIndicator == 0], 
+                     scores.class1 = pred.svmPoly[df.test$dmIndicator == 1], 
+                       curve = TRUE))
+plot(pr.svmPoly, add = TRUE, lty = 3, col = "red")
+#Area under curve (Integral):
+#  0.6556906
+(pr.gbm<-pr.curve(scores.class0 = pred.gbm[df.test$dmIndicator == 0], 
+                 scores.class1 = pred.gbm[df.test$dmIndicator == 1], 
+                       curve = TRUE))
+plot(pr.gbm, add = TRUE, col = "blue")
+#Area under curve (Integral):
+#  0.643346 
+##===========================================================
 
 
