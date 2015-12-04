@@ -97,14 +97,6 @@ df.train.even = rbind(df.train[df.train$dmIndicator == 1,],
                       df.train[sample(x=which(df.train$dmIndicator == 0),
                                       size = sum(df.train$dmIndicator == 1)),])
 
-colnames.top20 <- c("YearOfBirth", "BMI.med", "SystolicBP.med",
-                    "DiastolicBP.med", "Weight.med", "ct.InternalMedicine",
-                    "ct.Transcripts", "ct.ccs.9899", "ct.ccs.98",
-                    "ct.ccs.53", "ct.ccs.651", "ct.ccs.84", "ct.ccs.158",
-                    "ct.ccs.49", "ct.DGNs", "ct.ccs.Distinct",
-                    "cntMedication", "cntMedLis", "ct.Chol.Med",
-                    "labPanelCMP")
-
 # Descriptive Statistics
 
 # ================================================================================= #
@@ -458,28 +450,50 @@ ggplot(svmPoly, metric = "ROC")
 ## Plot and save variable importance
 
 rfImp = varImp(rf_model, scale = TRUE)
-ggplot(rfImp, top = 20) + ggtitle("Variable Importance:  Random Forest")
+ggplot(rfImp, top = 20) + geom_bar(stat = "identity", fill = "forestgreen") +
+  ggtitle("Variable Importance:  Random Forest") 
 rfVarImp = data.frame(rfImp$importance) 
 rfVarImp = rfVarImp[order(-rfVarImp$Overall), ,drop = FALSE]
 write.csv(rfVarImp, "rfVarImp.csv")
+rfVarImp$varnames <- rownames(rfVarImp)
+rfVarImp$rank.rf <- 1:nrow(rfVarImp)
+colnames(rfVarImp)[1] <- "imp.rf"
 
 gbmImp = varImp(gbm_model, scale = TRUE)
-ggplot(gbmImp, top = 20) + ggtitle("Variable Importance:  GBM")
+ggplot(gbmImp, top = 20) + geom_bar(stat = "identity", fill = "deepskyblue4") +
+  ggtitle("Boosted Trees")
 gbmVarImp = data.frame(gbmImp$importance) 
 gbmVarImp = gbmVarImp[order(-gbmVarImp$Overall), ,drop = FALSE]
 write.csv(gbmVarImp, "gbmVarImp.csv")
+gbmVarImp$varnames <- rownames(gbmVarImp)
+gbmVarImp$rank.gbm <- 1:nrow(gbmVarImp)
+colnames(gbmVarImp)[1] <- "imp.gbm"
 
 svmLinearImp = varImp(svmLinear, scale = TRUE)
-ggplot(svmLinearImp, top = 20) + ggtitle("Variable Importance:  Linear SVM")
-svmLinearImp = data.frame(svmLinearImp$importance)
-svmLinearImp = svmLinearImp[order(-svmLinearImp[,1]),]
-write.csv(svmLinearImp, "svmLinearImp.csv")
+ggplot(svmLinearImp, top = 20) + geom_bar(stat = "identity", fill = "tomato3") +
+  ggtitle("SVM with Linear Kernel")
+svmLinearVarImp = data.frame(svmLinearImp$importance)
+svmLinearVarImp = svmLinearVarImp[order(-svmLinearVarImp[,1]),]
+write.csv(svmLinearVarImp, "svmLinearImp.csv")
+svmLinearVarImp = subset(svmLinearVarImp, select = c(-2))
+svmLinearVarImp$varnames <- rownames(svmLinearVarImp)
+svmLinearVarImp$rank.svm <- 1:nrow(svmLinearVarImp)
+colnames(svmLinearVarImp)[1] <- "imp.svm"
 
+## same as linear..
 svmPolyImp = varImp(svmPoly, scale = TRUE)
 ggplot(svmPolyImp, top = 20) + ggtitle("Variable Importance:  Polynomial SVM")
 svmPolyImp = data.frame(svmPolyImp$importance)
 svmPolyImp = svmPolyImp[order(-svmPolyImp[,1]),]
 write.csv(svmPolyImp, "svmPolyImp.csv")
+
+## Combine variable importance metrics, calculate average ranking
+totalVarImp <- merge(rfVarImp, gbmVarImp, all = TRUE, by = "varnames")
+totalVarImp <- merge(totalVarImp, svmLinearVarImp, all = TRUE, by = "varnames")
+totalVarImp$avgRank <- rowSums(totalVarImp[, c("rank.svm", "rank.rf", "rank.gbm")])/
+  rowSums(!is.na(totalVarImp[, c("rank.svm", "rank.rf", "rank.gbm")]))
+totalVarImp <- totalVarImp[order(totalVarImp$avgRank),]
+write.csv(totalVarImp, "totalVarImp.csv")
 
 #######==================================================
 ### B) REDUCED FEATURE SET for each model based on variable importance
@@ -546,46 +560,58 @@ pred.gbm = predict(gbm_model, newdata = df.test, type = "prob")[,2]
 
 ## Plot ROC (output AUC)
 roc.test.svmLinear <- roc(df.test[, 1], pred.svmLinear)
-plot.roc(roc.test.svmLinear, main = "ROC:  Full Feature Set", lty=1)
+plot.roc(roc.test.svmLinear, main = "ROC:  Full Feature Set", lty=3,  lwd = 3,col = "tomato3")
 # Area under the curve: 0.8113
 roc.test.svmPoly <- roc(df.test[, 1], pred.svmPoly)
-plot.roc(roc.test.svmPoly, add = TRUE, lty = 2)
+plot.roc(roc.test.svmPoly, add = TRUE, lty = 4, lwd = 3, col = "darkorchid3")
 # Area under the curve: 0.8187
 roc.test.gbm <- roc(df.test[, 1], pred.gbm)
-plot.roc(roc.test.gbm, add = TRUE, lty = 3)
+plot.roc(roc.test.gbm, add = TRUE, lty = 1,  lwd = 3,col = "deepskyblue4")
 #Area under the curve: 0.8495
 roc.test.rf <- roc(df.test[, 1], pred.rf)
-plot.roc(roc.test.rf, add = TRUE, lty = 4)
+plot.roc(roc.test.rf, add = TRUE, lty = 2, lwd = 3, col = "forestgreen")
 # Area under the curve: 0.8359
-## legend
+legend("bottomright", 
+       legend = c("Boosted Trees (AUC = .850)", 
+                                 "Random Forest (AUC = .836)",
+                                 "SVM Polynomial (AUC = .819)", 
+                                 "SVM Linear (AUC = .811)"),
+       lty = c(1, 2, 4, 3), lwd = 3, cex = 0.75,
+       col = c("deepskyblue4", "forestgreen", "darkorchid3", "tomato3"))
 
 ## Plot PRC (output AUC)
 (pr.svmLinear<-pr.curve(scores.class0 = pred.svmLinear[df.test$dmIndicator == 0], 
              scores.class1 = pred.svmLinear[df.test$dmIndicator == 1], 
              curve = TRUE))
-plot(pr.svmLinear, auc.main = FALSE, main = "PR Curve:  Full Feature Set", lty = 2, col = "black")
+plot(pr.svmLinear, auc.main = FALSE, 
+     main = "PR Curve:  Full Feature Set", lty = 3, col = "tomato3", lwd = 3)
 #Area under curve (Integral):
 #  0.6597257 
 (pr.svmPoly<-pr.curve(scores.class0 = pred.svmPoly[df.test$dmIndicator == 0], 
                      scores.class1 = pred.svmPoly[df.test$dmIndicator == 1], 
                        curve = TRUE))
-plot(pr.svmPoly, add = TRUE, lty = 3, col = "red")
+plot(pr.svmPoly, add = TRUE, col = "darkorchid3", lwd = 3, lty = 4)
 #Area under curve (Integral):
 #  0.6556906
 (pr.gbm<-pr.curve(scores.class0 = pred.gbm[df.test$dmIndicator == 0], 
                  scores.class1 = pred.gbm[df.test$dmIndicator == 1], 
                        curve = TRUE))
-plot(pr.gbm, add = TRUE, col = "blue")
+plot(pr.gbm, add = TRUE, col = "deepskyblue4", lty = 1, lwd = 3)
 #Area under curve (Integral):
 #  0.643346 
 pr.rf<-pr.curve(scores.class0 = pred.rf[df.test$dmIndicator == 0], 
                  scores.class1 = pred.rf[df.test$dmIndicator == 1], 
                  curve = TRUE)
-plot(pr.rf, add = TRUE, col = "green")
+plot(pr.rf, add = TRUE, col = "forestgreen", lty = 2, lwd = 3)
 #   Area under curve (Integral):
 # 0.6487595
-
-## legend
+legend("bottomright", 
+       legend = c("Boosted Trees (AUC = .643)", 
+                  "Random Forest (AUC = .649)",
+                  "SVM Polynomial (AUC = .656)", 
+                  "SVM Linear (AUC = .660)"),
+       lty = c(1, 2, 4, 3), lwd = 3, cex = 0.75,
+       col = c("deepskyblue4", "forestgreen", "darkorchid3", "tomato3"))
 
 ##===========================================================
 
@@ -603,18 +629,23 @@ pred.gbmR = predict(gbm_model20, newdata = df.test, type = "prob")[,2]
 
 ## Plot ROC (output AUC)
 roc.test.svmLinearR <- roc(df.test[, 1], pred.svmLinearR)
-plot.roc(roc.test.svmLinearR, main = "ROC:  Reduced Feature Set", lty=1)
+plot.roc(roc.test.svmLinearR, main = "ROC:  Reduced Feature Set", lty=3,
+         lwd = 3, col = "tomato3")
 # Area under the curve: 0.7967
 #roc.test.svmPoly <- roc(df.test[, 1], pred.svmPoly)
 #plot.roc(roc.test.svmPoly, add = TRUE, lty = 2)
-# Area under the curve: 0.8187
 roc.test.gbmR <- roc(df.test[, 1], pred.gbmR)
-plot.roc(roc.test.gbmR, add = TRUE, lty = 3)
+plot.roc(roc.test.gbmR, add = TRUE, lty = 1, lwd = 3, col = "deepskyblue4")
 #Area under the curve: 0.8366
 roc.test.rfR <- roc(df.test[, 1], pred.rfR)
-plot.roc(roc.test.rfR, add = TRUE, lty = 4)
+plot.roc(roc.test.rfR, add = TRUE, lty = 2, lwd = 3, col = "forestgreen")
 # Area under the curve:  0.8189
-## legend
+legend("bottomright", 
+       legend = c("Boosted Trees (AUC = .837)", 
+                  "Random Forest (AUC = .819)",
+                  "SVM Linear (AUC = .797)"),
+       lty = c(1, 2, 3), lwd = 3, cex = 0.75,
+       col = c("deepskyblue4", "forestgreen", "tomato3"))
 
 ## Plot PRC (output AUC)
 ## PRC AUCs appear to be slightly higher for reduced than for full feature sets?
@@ -622,7 +653,8 @@ plot.roc(roc.test.rfR, add = TRUE, lty = 4)
 (pr.svmLinearR<-pr.curve(scores.class0 = pred.svmLinearR[df.test$dmIndicator == 0], 
                         scores.class1 = pred.svmLinearR[df.test$dmIndicator == 1], 
                         curve = TRUE))
-plot(pr.svmLinearR, auc.main = FALSE, main = "PR Curve:  Reduced Feature Set", lty = 2, col = "black")
+plot(pr.svmLinearR, auc.main = FALSE, 
+     main = "PR Curve:  Reduced Feature Set", lty = 3, col = "tomato3", lwd = 3)
 #Area under curve (Integral):
 #  0.6665106 
 #(pr.svmPoly<-pr.curve(scores.class0 = pred.svmPoly[df.test$dmIndicator == 0], 
@@ -633,14 +665,19 @@ plot(pr.svmLinearR, auc.main = FALSE, main = "PR Curve:  Reduced Feature Set", l
 (pr.gbmR<-pr.curve(scores.class0 = pred.gbmR[df.test$dmIndicator == 0], 
                   scores.class1 = pred.gbmR[df.test$dmIndicator == 1], 
                   curve = TRUE))
-plot(pr.gbmR, add = TRUE, col = "blue")
+plot(pr.gbmR, add = TRUE, col = "deepskyblue4", lwd = 3, lty = 1)
 #    Area under curve (Integral):
 #  0.6488368 
 pr.rfR<-pr.curve(scores.class0 = pred.rfR[df.test$dmIndicator == 0], 
                 scores.class1 = pred.rfR[df.test$dmIndicator == 1], 
                 curve = TRUE)
-plot(pr.rfR, add = TRUE, col = "green")
+plot(pr.rfR, add = TRUE, col = "forestgreen", lwd = 3, lty = 2)
 #   Area under curve (Integral):
 #   0.6560269 
-
+legend("bottomright", 
+       legend = c("Boosted Trees (AUC = .649)", 
+                  "Random Forest (AUC = .656)",
+                  "SVM Linear    (AUC = .667)"),
+       lty = c(1, 2, 3), lwd = 3, cex = 0.75,
+       col = c("deepskyblue4", "forestgreen", "tomato3"))
 
