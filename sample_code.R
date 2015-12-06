@@ -126,27 +126,28 @@ ggpairs(df.train)
 
 df.train$Age <- 2009-df.train$YearOfBirth
 df.train$dmIndicator <- factor(df.train$dmIndicator, levels = c("1", "0"))
-vars.to.plot <- c("Age", "BMI.med", "ct.ccs.9899","Weight.med",  "ct.Transcripts")
+vars.to.plot <- c("Age", "BMI.med", "ct.ccs.9899","Weight.med",  "ct.Transcripts", "ct.ccs.53")
 vars.labels <- c("Age", "BMI", "Hypertension Diagnosis Count", "Weight (lbs)", 
-                 "Transcript Count")
+                 "Transcript Count", "Lipid Metabolism Diagnosis Count")
 max.x <- c(max(df.train[,"Age"]), max(df.train[,"BMI.med"]), 25, max(df.train[,"Weight.med"]),
-           100))
+           100, 20)
 for (i in 1:length(vars.to.plot)) {
-  i = length(vars.to.plot)
+  png(file=paste0(vars.to.plot[i], "density.png"),width=700,height=540)
   print(ggplot(df.train, aes_string(x=vars.to.plot[i])) + xlab(vars.labels[i]) +
           geom_density(aes(group=dmIndicator, colour = dmIndicator, fill=dmIndicator), alpha = 0.3) +
-          theme(legend.title=element_blank(), 
-                legend.text = element_text(size = 16, face = "bold"),
-                axis.text.x = element_text(size = 16, face = "bold"),
-                axis.title.x = element_text(size = 16, face = "bold"),
+          theme(legend.position = "none",
+                axis.text.x = element_text(size = 30, face = "bold"),
+                axis.title.x = element_text(size = 30, face = "bold"),
                 axis.ticks = element_blank(), axis.title.y = element_blank(),
                 axis.text.y = element_blank())  +
           scale_x_continuous(limits = c(0,max.x[i])) +
           scale_colour_discrete(labels=c("Diabetes +", "Diabetes -")) + 
           scale_fill_discrete(labels=c("Diabetes +", "Diabetes -") ) 
   )
+  dev.off()
 }
-
+#legend.title=element_blank(), 
+#legend.text = element_text(size = 16, face = "bold"),
 # ================================================================================= #
 
 ## Random Forest
@@ -450,8 +451,15 @@ ggplot(svmPoly, metric = "ROC")
 ## Plot and save variable importance
 
 rfImp = varImp(rf_model, scale = TRUE)
+png(file="RFImp.png",width=400,height=450)
 ggplot(rfImp, top = 20) + geom_bar(stat = "identity", fill = "forestgreen") +
-  ggtitle("Variable Importance:  Random Forest") 
+  ggtitle("Random Forest")  + 
+  theme( axis.text.x = element_text(size = 16, face = "bold"),
+         axis.title.x = element_text(size = 16, face = "bold"),
+         axis.ticks = element_blank(), axis.title.y = element_blank(),
+         axis.text.y = element_text(size = 14, face = "bold"),
+         plot.title = element_text(size = 16, face = "bold")) 
+dev.off()
 rfVarImp = data.frame(rfImp$importance) 
 rfVarImp = rfVarImp[order(-rfVarImp$Overall), ,drop = FALSE]
 write.csv(rfVarImp, "rfVarImp.csv")
@@ -460,8 +468,15 @@ rfVarImp$rank.rf <- 1:nrow(rfVarImp)
 colnames(rfVarImp)[1] <- "imp.rf"
 
 gbmImp = varImp(gbm_model, scale = TRUE)
+png(file="GBMImp.png",width=400,height=450)
 ggplot(gbmImp, top = 20) + geom_bar(stat = "identity", fill = "deepskyblue4") +
-  ggtitle("Boosted Trees")
+  ggtitle("Boosted Trees") + 
+  theme( axis.text.x = element_text(size = 16, face = "bold"),
+         axis.title.x = element_text(size = 16, face = "bold"),
+         axis.ticks = element_blank(), axis.title.y = element_blank(),
+         axis.text.y = element_text(size = 14, face = "bold"),
+         plot.title = element_text(size = 16, face = "bold")) 
+dev.off()
 gbmVarImp = data.frame(gbmImp$importance) 
 gbmVarImp = gbmVarImp[order(-gbmVarImp$Overall), ,drop = FALSE]
 write.csv(gbmVarImp, "gbmVarImp.csv")
@@ -470,11 +485,19 @@ gbmVarImp$rank.gbm <- 1:nrow(gbmVarImp)
 colnames(gbmVarImp)[1] <- "imp.gbm"
 
 svmLinearImp = varImp(svmLinear, scale = TRUE)
+png(file="SvmLinearImp.png",width=400,height=450)
 ggplot(svmLinearImp, top = 20) + geom_bar(stat = "identity", fill = "tomato3") +
-  ggtitle("SVM with Linear Kernel")
+  ggtitle("SVM with Linear Kernel") + 
+  theme( axis.text.x = element_text(size = 16, face = "bold"),
+  axis.title.x = element_text(size = 16, face = "bold"),
+  axis.ticks = element_blank(), axis.title.y = element_blank(),
+  axis.text.y = element_text(size = 14, face = "bold"),
+  plot.title = element_text(size = 16, face = "bold")) 
+dev.off()
 svmLinearVarImp = data.frame(svmLinearImp$importance)
 svmLinearVarImp = svmLinearVarImp[order(-svmLinearVarImp[,1]),]
 write.csv(svmLinearVarImp, "svmLinearImp.csv")
+
 svmLinearVarImp = subset(svmLinearVarImp, select = c(-2))
 svmLinearVarImp$varnames <- rownames(svmLinearVarImp)
 svmLinearVarImp$rank.svm <- 1:nrow(svmLinearVarImp)
@@ -559,8 +582,11 @@ pred.svmPoly = predict(svmPoly, newdata = df.test, type = "prob")[,2]
 pred.gbm = predict(gbm_model, newdata = df.test, type = "prob")[,2]
 
 ## Plot ROC (output AUC)
+png(file="ROC_Full.png",width=450,height=450)
+par(mar = c(5.5, 5.5, 4.5 , 1.5))
 roc.test.svmLinear <- roc(df.test[, 1], pred.svmLinear)
-plot.roc(roc.test.svmLinear, main = "ROC:  Full Feature Set", lty=3,  lwd = 3,col = "tomato3")
+plot.roc(roc.test.svmLinear, main = "ROC:  Full Feature Set", lty=3,  
+         lwd = 3,col = "tomato3", font = 2, cex.main = 2, cex.lab = 2, cex.axis = 1.7)
 # Area under the curve: 0.8113
 roc.test.svmPoly <- roc(df.test[, 1], pred.svmPoly)
 plot.roc(roc.test.svmPoly, add = TRUE, lty = 4, lwd = 3, col = "darkorchid3")
@@ -570,21 +596,28 @@ plot.roc(roc.test.gbm, add = TRUE, lty = 1,  lwd = 3,col = "deepskyblue4")
 #Area under the curve: 0.8495
 roc.test.rf <- roc(df.test[, 1], pred.rf)
 plot.roc(roc.test.rf, add = TRUE, lty = 2, lwd = 3, col = "forestgreen")
+dev.off()
 # Area under the curve: 0.8359
+png(file="ROC_Full_Legend.png",width=450,height=450)
+plot.new()
 legend("bottomright", 
        legend = c("Boosted Trees (AUC = .850)", 
                                  "Random Forest (AUC = .836)",
                                  "SVM Polynomial (AUC = .819)", 
                                  "SVM Linear (AUC = .811)"),
-       lty = c(1, 2, 4, 3), lwd = 3, cex = 0.75,
+       lty = c(1, 2, 4, 3), lwd = 3, cex = 1.2,
        col = c("deepskyblue4", "forestgreen", "darkorchid3", "tomato3"))
+dev.off()
 
 ## Plot PRC (output AUC)
+png(file="PRC_Full.png",width=450,height=450)
+par(mar = c(5.1, 5.1, 4.1 , 1.1))
 (pr.svmLinear<-pr.curve(scores.class0 = pred.svmLinear[df.test$dmIndicator == 0], 
              scores.class1 = pred.svmLinear[df.test$dmIndicator == 1], 
              curve = TRUE))
-plot(pr.svmLinear, auc.main = FALSE, 
-     main = "PR Curve:  Full Feature Set", lty = 3, col = "tomato3", lwd = 3)
+plot(pr.svmLinear, auc.main = FALSE,
+     main = "PR Curve:  Full Feature Set", lty = 3, col = "tomato3", lwd = 3,
+     font = 2, cex.main = 2, cex.lab = 2, cex.axis = 1.7)
 #Area under curve (Integral):
 #  0.6597257 
 (pr.svmPoly<-pr.curve(scores.class0 = pred.svmPoly[df.test$dmIndicator == 0], 
@@ -603,16 +636,19 @@ pr.rf<-pr.curve(scores.class0 = pred.rf[df.test$dmIndicator == 0],
                  scores.class1 = pred.rf[df.test$dmIndicator == 1], 
                  curve = TRUE)
 plot(pr.rf, add = TRUE, col = "forestgreen", lty = 2, lwd = 3)
+dev.off()
 #   Area under curve (Integral):
 # 0.6487595
+png(file="PRC_FULL_Legend.png",width=450,height=450)
+plot.new()
 legend("bottomright", 
        legend = c("Boosted Trees (AUC = .643)", 
                   "Random Forest (AUC = .649)",
                   "SVM Polynomial (AUC = .656)", 
                   "SVM Linear (AUC = .660)"),
-       lty = c(1, 2, 4, 3), lwd = 3, cex = 0.75,
+       lty = c(1, 2, 4, 3), lwd = 3, cex = 1.2,
        col = c("deepskyblue4", "forestgreen", "darkorchid3", "tomato3"))
-
+dev.off()
 ##===========================================================
 
 ## B)  Reduced Feature Sets =================================
@@ -628,9 +664,11 @@ pred.svmLinearR = predict(svmLinear11, newdata = df.test, type = "prob")[,2]
 pred.gbmR = predict(gbm_model20, newdata = df.test, type = "prob")[,2]
 
 ## Plot ROC (output AUC)
+png(file="ROC_Reduced.png",width=450,height=450)
 roc.test.svmLinearR <- roc(df.test[, 1], pred.svmLinearR)
 plot.roc(roc.test.svmLinearR, main = "ROC:  Reduced Feature Set", lty=3,
-         lwd = 3, col = "tomato3")
+         lwd = 3, col = "tomato3",
+         font = 2, cex.main = 2, cex.lab = 2, cex.axis = 1.7)
 # Area under the curve: 0.7967
 #roc.test.svmPoly <- roc(df.test[, 1], pred.svmPoly)
 #plot.roc(roc.test.svmPoly, add = TRUE, lty = 2)
@@ -640,21 +678,25 @@ plot.roc(roc.test.gbmR, add = TRUE, lty = 1, lwd = 3, col = "deepskyblue4")
 roc.test.rfR <- roc(df.test[, 1], pred.rfR)
 plot.roc(roc.test.rfR, add = TRUE, lty = 2, lwd = 3, col = "forestgreen")
 # Area under the curve:  0.8189
+dev.off()
+png(file="ROC_Reduced_Legend.png",width=450,height=450)
 legend("bottomright", 
        legend = c("Boosted Trees (AUC = .837)", 
                   "Random Forest (AUC = .819)",
                   "SVM Linear (AUC = .797)"),
-       lty = c(1, 2, 3), lwd = 3, cex = 0.75,
+       lty = c(1, 2, 3), lwd = 3, cex = 1.2,
        col = c("deepskyblue4", "forestgreen", "tomato3"))
-
+dev.off()
 ## Plot PRC (output AUC)
 ## PRC AUCs appear to be slightly higher for reduced than for full feature sets?
-
+png(file="PRC_Reduced.png",width=450,height=450)
+par(mar = c(5.1, 5.1, 4.1 , 1.1))
 (pr.svmLinearR<-pr.curve(scores.class0 = pred.svmLinearR[df.test$dmIndicator == 0], 
                         scores.class1 = pred.svmLinearR[df.test$dmIndicator == 1], 
                         curve = TRUE))
 plot(pr.svmLinearR, auc.main = FALSE, 
-     main = "PR Curve:  Reduced Feature Set", lty = 3, col = "tomato3", lwd = 3)
+     main = "PR Curve:  Reduced Feature Set", lty = 3, col = "tomato3", lwd = 3,
+     font = 2, cex.main = 2, cex.lab = 2, cex.axis = 1.7)
 #Area under curve (Integral):
 #  0.6665106 
 #(pr.svmPoly<-pr.curve(scores.class0 = pred.svmPoly[df.test$dmIndicator == 0], 
@@ -674,10 +716,13 @@ pr.rfR<-pr.curve(scores.class0 = pred.rfR[df.test$dmIndicator == 0],
 plot(pr.rfR, add = TRUE, col = "forestgreen", lwd = 3, lty = 2)
 #   Area under curve (Integral):
 #   0.6560269 
+dev.off()
+png(file="PRC_Reduced_Legend.png",width=450,height=450)
+plot.new()
 legend("bottomright", 
        legend = c("Boosted Trees (AUC = .649)", 
                   "Random Forest (AUC = .656)",
                   "SVM Linear    (AUC = .667)"),
-       lty = c(1, 2, 3), lwd = 3, cex = 0.75,
+       lty = c(1, 2, 3), lwd = 3, cex = 1.2,
        col = c("deepskyblue4", "forestgreen", "tomato3"))
-
+dev.off()
