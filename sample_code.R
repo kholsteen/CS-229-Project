@@ -580,6 +580,17 @@ pred.rf = predict(rf_model, newdata = df.test, type = "prob")[,2]
 pred.svmLinear = predict(svmLinear, newdata = df.test, type = "prob")[,2]
 pred.svmPoly = predict(svmPoly, newdata = df.test, type = "prob")[,2]
 pred.gbm = predict(gbm_model, newdata = df.test, type = "prob")[,2]
+## responses
+pred.rf.raw = predict(rf_model, newdata = df.test, type = "raw")
+pred.svmLinear.raw = predict(svmLinear, newdata = df.test, type = "raw")
+pred.svmPoly.raw = predict(svmPoly, newdata = df.test, type = "raw")
+pred.gbm.raw = predict(gbm_model, newdata = df.test, type = "raw")
+
+## Misclassification Rates
+prop.table(table(df.test$dmIndicator, pred.rf.raw),1)
+prop.table(table(df.test$dmIndicator, pred.svmLinear.raw),1)
+prop.table(table(df.test$dmIndicator, pred.svmPoly.raw),1)
+prop.table(table(df.test$dmIndicator, pred.gbm.raw),1)
 
 ## Plot ROC (output AUC)
 png(file="ROC_Full.png",width=450,height=450)
@@ -658,11 +669,21 @@ svmLinear11 <- readRDS("svmLinearTune11.rds")
 gbm_model20 <- readRDS("gbm_model20.rds")
 
 # Test set: Evaluate the model on the test set
+## probabilities
 pred.rfR = predict(rf_model15, newdata = df.test, type = "prob")[,2]
 pred.svmLinearR = predict(svmLinear11, newdata = df.test, type = "prob")[,2]
 #pred.svmPoly = predict(svmPoly, newdata = df.test, type = "prob")[,2]
 pred.gbmR = predict(gbm_model20, newdata = df.test, type = "prob")[,2]
 
+## responses
+pred.rfR.raw = predict(rf_model15, newdata = df.test, type = "raw")
+pred.svmLinearR.raw = predict(svmLinear11, newdata = df.test, type = "raw")
+pred.gbmR.raw = predict(gbm_model20, newdata = df.test, type = "raw")
+
+## Misclassification Rates
+prop.table(table(df.test$dmIndicator, pred.rfR.raw),1)
+prop.table(table(df.test$dmIndicator, pred.svmLinearR.raw),1)
+prop.table(table(df.test$dmIndicator, pred.gbmR.raw),1)
 ## Plot ROC (output AUC)
 png(file="ROC_Reduced.png",width=450,height=450)
 roc.test.svmLinearR <- roc(df.test[, 1], pred.svmLinearR)
@@ -726,3 +747,6 @@ legend("bottomright",
        lty = c(1, 2, 3), lwd = 3, cex = 1.2,
        col = c("deepskyblue4", "forestgreen", "tomato3"))
 dev.off()
+
+
+
